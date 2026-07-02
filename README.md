@@ -214,6 +214,100 @@ Telegram commands:
 
 Allowed manual results: `hit_tp1`, `hit_tp2`, `hit_sl`, `break_even`, `expired`, `invalidated`, `manually_closed`.
 
+## Signal Learning Loop
+
+CryptoTrade includes a feedback loop for signal quality improvement. This is not DeepSeek fine-tuning and DeepSeek does not gain permanent memory. The bot stores signal history, tracks outcomes, asks DeepSeek to review completed signals, stores suggested lessons, and uses only admin-approved active lessons as context for future analysis.
+
+Learning flow:
+
+```text
+Market Data
+→ Feature Extractor
+→ Orderflow Analyzer
+→ Load Active Lessons
+→ Adaptive Scoring Precheck
+→ DeepSeek AI Market Analyst with learning_context
+→ Signal Validator
+→ Save Signal
+→ Telegram Admin / Channel Broadcast
+→ Outcome Tracker
+→ Post-Trade Review
+→ Suggested Lessons
+→ Admin Approval
+→ Active Lessons
+```
+
+Safety rules:
+
+- Still signal-only.
+- No auto-trading.
+- No order creation/cancellation.
+- No private exchange API.
+- DeepSeek review output must be valid JSON.
+- AI cannot activate rules directly.
+- New lessons are created as `suggested`.
+- Only `/approve_lesson ID` makes a lesson `active`.
+- Rejected or disabled lessons are not injected into prompts.
+
+Learning config:
+
+```env
+ENABLE_SIGNAL_LEARNING=true
+ENABLE_AUTO_REVIEW=true
+ENABLE_ADAPTIVE_SCORING=true
+REQUIRE_ADMIN_APPROVAL_FOR_LESSONS=true
+MAX_ACTIVE_LESSONS_IN_PROMPT=10
+MIN_EVIDENCE_COUNT_FOR_AUTO_SUGGESTION=5
+PERFORMANCE_LOOKBACK_DAYS=30
+LEARNING_REVIEW_MODEL=deepseek-chat
+LEARNING_PROMPT_VERSION=ai_signal_review_v1
+```
+
+Database tables:
+
+- `signal_outcomes` tracks TP/SL/expiry, MFE, MAE, duration, and close reason.
+- `signal_reviews` stores DeepSeek post-trade review JSON and failure classification.
+- `strategy_lessons` stores suggested/active/rejected/disabled lessons with audit trail.
+- `performance_snapshots` stores computed performance summaries.
+
+Post-trade review classification:
+
+- `good_signal`
+- `valid_loss`
+- `avoidable_loss`
+- `bad_signal`
+- `inconclusive`
+
+Lesson types:
+
+- `avoid_condition`
+- `confidence_penalty`
+- `confidence_boost`
+- `filter_rule`
+- `risk_adjustment`
+- `prompt_context`
+- `warning_note`
+
+Adaptive scoring:
+
+- Uses active lessons only.
+- Confidence penalty is capped at `-25`.
+- Confidence boost is capped at `+10`.
+- Boost is blocked when RR is poor, orderflow conflicts, or data is insufficient.
+- `avoid_condition` and `filter_rule` active lessons can block a candidate before broadcast.
+
+Learning commands:
+
+- `/performance`, `/performance 7d`, `/performance 30d`, `/performance all`
+- `/lessons`
+- `/lesson_detail ID`
+- `/approve_lesson ID`
+- `/reject_lesson ID`
+- `/disable_lesson ID`
+- `/review_signal ID`
+- `/signal_result ID RESULT`
+- `/learning_status`
+
 Aggressive trade interpretation:
 
 - Aggressive buy volume means buyer taker pressure, not guaranteed new long positions.

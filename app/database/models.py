@@ -47,6 +47,8 @@ class SignalLog(Base):
     orderflow_score = Column(Integer, default=0)
     risk_score = Column(Integer, default=0)
     final_confidence = Column(Integer, default=0)
+    ai_prompt_version = Column(String(64), default="")
+    active_lessons_json = Column(Text, default="[]")
     orderflow_bias = Column(String(32), default="")
     orderflow_conflict = Column(Boolean, default=False)
     absorption_signal = Column(String(64), default="none")
@@ -80,6 +82,69 @@ class SignalOutcome(Base):
     expired_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utc_now)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class SignalReview(Base):
+    __tablename__ = "signal_reviews"
+
+    id = Column(Integer, primary_key=True, index=True)
+    signal_id = Column(Integer, index=True)
+    result = Column(String(32), default="")
+    result_quality = Column(String(32), default="inconclusive", index=True)
+    main_failure_reason = Column(String(128), default="")
+    warning_signs_json = Column(Text, default="[]")
+    what_should_have_been_checked_json = Column(Text, default="[]")
+    recommended_rule_adjustments_json = Column(Text, default="[]")
+    confidence_penalty_conditions_json = Column(Text, default="[]")
+    confidence_boost_conditions_json = Column(Text, default="[]")
+    future_lesson = Column(Text, default="")
+    ai_review_json = Column(Text, default="{}")
+    reviewed_at = Column(DateTime(timezone=True), default=utc_now)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+
+
+class StrategyLesson(Base):
+    __tablename__ = "strategy_lessons"
+
+    id = Column(Integer, primary_key=True, index=True)
+    lesson_text = Column(Text, default="")
+    lesson_type = Column(String(64), default="warning_note", index=True)
+    affected_condition = Column(String(128), default="")
+    affected_symbols_json = Column(Text, default="[]")
+    affected_timeframes_json = Column(Text, default="[]")
+    confidence_adjustment = Column(Integer, default=0)
+    filter_rule_json = Column(Text, default="{}")
+    evidence_count = Column(Integer, default=1)
+    winrate_before = Column(Float, default=0.0)
+    status = Column(String(32), default="suggested", index=True)
+    source_signal_id = Column(Integer, default=0, index=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    approved_at = Column(DateTime(timezone=True), nullable=True)
+    rejected_at = Column(DateTime(timezone=True), nullable=True)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class PerformanceSnapshot(Base):
+    __tablename__ = "performance_snapshots"
+
+    id = Column(Integer, primary_key=True, index=True)
+    period = Column(String(32), default="30d", index=True)
+    total_signals = Column(Integer, default=0)
+    winrate = Column(Float, default=0.0)
+    tp1_rate = Column(Float, default=0.0)
+    tp2_rate = Column(Float, default=0.0)
+    sl_rate = Column(Float, default=0.0)
+    expired_rate = Column(Float, default=0.0)
+    average_rr = Column(Float, default=0.0)
+    average_mfe = Column(Float, default=0.0)
+    average_mae = Column(Float, default=0.0)
+    profit_factor_estimate = Column(Float, default=0.0)
+    best_symbols_json = Column(Text, default="[]")
+    worst_symbols_json = Column(Text, default="[]")
+    best_conditions_json = Column(Text, default="[]")
+    worst_conditions_json = Column(Text, default="[]")
+    summary_json = Column(Text, default="{}")
+    created_at = Column(DateTime(timezone=True), default=utc_now)
 
 
 class RejectedSetup(Base):

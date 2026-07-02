@@ -790,6 +790,134 @@ Outcome: <b>{h(getattr(outcome, 'result', ''))}</b>
 Close Reason: {h(getattr(outcome, 'close_reason', '') or '-')}"""
 
 
+def format_performance_message(stats: dict[str, Any]) -> str:
+    best_symbols = "\n".join(f"{i}. {h(x.get('name'))} — {h(x.get('winrate'))}% WR ({h(x.get('sample'))})" for i, x in enumerate(stats.get("best_symbols", [])[:5], 1)) or "-"
+    worst_symbols = "\n".join(f"{i}. {h(x.get('name'))} — {h(x.get('winrate'))}% WR ({h(x.get('sample'))})" for i, x in enumerate(stats.get("worst_symbols", [])[:5], 1)) or "-"
+    best_conditions = "\n".join(f"* {h(x)}" for x in stats.get("best_conditions", [])[:5]) or "-"
+    worst_conditions = "\n".join(f"* {h(x)}" for x in stats.get("worst_conditions", [])[:5]) or "-"
+    return f"""<b>📊 CryptoTrade Performance</b>
+
+{SEP}
+<b>Period:</b> {h(stats.get('period'))}
+<b>Total Signals:</b> {h(stats.get('total_signals'))}
+<b>Winrate:</b> {h(stats.get('winrate'))}%
+<b>TP1 Rate:</b> {h(stats.get('tp1_rate'))}%
+<b>TP2 Rate:</b> {h(stats.get('tp2_rate'))}%
+<b>SL Rate:</b> {h(stats.get('sl_rate'))}%
+<b>Expired:</b> {h(stats.get('expired_rate'))}%
+
+Average RR: 1:{h(stats.get('average_rr'))}
+Avg MFE: {h(stats.get('average_mfe'))}
+Avg MAE: {h(stats.get('average_mae'))}
+Profit Factor Est: {h(stats.get('profit_factor_estimate'))}
+
+{SEP}
+<b>Best Symbols</b>
+{best_symbols}
+
+<b>Worst Symbols</b>
+{worst_symbols}
+
+<b>Best Conditions</b>
+{best_conditions}
+
+<b>Worst Conditions</b>
+{worst_conditions}
+
+{h(stats.get('sample_warning', ''))}"""
+
+
+def format_lessons_message(lessons: list[Any]) -> str:
+    active = [x for x in lessons if getattr(x, "status", "") == "active"]
+    suggested = [x for x in lessons if getattr(x, "status", "") == "suggested"]
+    rejected = [x for x in lessons if getattr(x, "status", "") == "rejected"]
+    active_rows = "\n".join(f"{i}. {h(x.lesson_text)} ({h(x.confidence_adjustment)} confidence)" for i, x in enumerate(active[:10], 1)) or "-"
+    suggested_rows = "\n".join(f"{i}. [ID {h(x.id)}] {h(x.lesson_text)}" for i, x in enumerate(suggested[:10], 1)) or "-"
+    return f"""<b>🧠 Strategy Lessons</b>
+
+{SEP}
+Active Lessons: {len(active)}
+Suggested Lessons: {len(suggested)}
+Rejected Lessons: {len(rejected)}
+
+{SEP}
+<b>Active</b>
+{active_rows}
+
+<b>Suggested</b>
+{suggested_rows}
+
+Commands: <code>/lesson_detail ID</code>, <code>/approve_lesson ID</code>, <code>/reject_lesson ID</code>, <code>/disable_lesson ID</code>"""
+
+
+def format_lesson_detail_message(lesson: Any, review: Any | None = None) -> str:
+    return f"""<b>🧠 Lesson Detail</b>
+
+{SEP}
+ID: {h(getattr(lesson, 'id', ''))}
+Status: {h(getattr(lesson, 'status', ''))}
+Type: {h(getattr(lesson, 'lesson_type', ''))}
+Adjustment: {h(getattr(lesson, 'confidence_adjustment', 0))}
+
+{SEP}
+<b>Lesson</b>
+{h(getattr(lesson, 'lesson_text', ''))}
+
+<b>Evidence</b>
+Source Signal: #{h(getattr(lesson, 'source_signal_id', 0))}
+Result Quality: {h(getattr(review, 'result_quality', '-') if review else '-')}
+Reason: {h(getattr(review, 'main_failure_reason', '-') if review else '-')}
+
+<b>Suggested Rule</b>
+{h(getattr(lesson, 'filter_rule_json', '{}'))}"""
+
+
+def format_learning_status_message(data: dict[str, Any]) -> str:
+    return f"""<b>🧠 Learning Status</b>
+
+{SEP}
+Signal Learning: {status_icon(data.get('enable_signal_learning'))}
+Auto Review: {status_icon(data.get('enable_auto_review'))}
+Adaptive Scoring: {status_icon(data.get('enable_adaptive_scoring'))}
+Admin Approval Required: {h('YES' if data.get('require_admin_approval_for_lessons') else 'NO')}
+
+{SEP}
+Pending Outcomes: {h(data.get('pending_outcomes'))}
+Pending Reviews: {h(data.get('pending_reviews'))}
+Active Lessons: {h(data.get('active_lessons'))}
+Suggested Lessons: {h(data.get('suggested_lessons'))}
+
+Lookback: {h(data.get('lookback_days'))} days
+Max Lessons in Prompt: {h(data.get('max_lessons'))}"""
+
+
+def format_signal_review_message(review: Any | None, error: str | None = None) -> str:
+    if error:
+        return format_error_message("Signal Review Failed", error, "Coba ulangi /review_signal ID nanti.")
+    return f"""<b>🧠 Signal Review</b>
+
+{SEP}
+Signal: #{h(getattr(review, 'signal_id', ''))}
+Quality: <b>{h(getattr(review, 'result_quality', ''))}</b>
+Main Reason: {h(getattr(review, 'main_failure_reason', ''))}
+
+{SEP}
+<b>Future Lesson</b>
+{h(getattr(review, 'future_lesson', ''))}"""
+
+
+def format_lesson_approved_message(lesson: Any) -> str:
+    return f"<b>✅ Lesson Approved</b>\n\nLesson <code>#{h(getattr(lesson, 'id', ''))}</code> sekarang active."
+
+
+def format_lesson_rejected_message(lesson: Any) -> str:
+    return f"<b>🟡 Lesson Rejected</b>\n\nLesson <code>#{h(getattr(lesson, 'id', ''))}</code> ditolak."
+
+
+def format_lesson_disabled_message(lesson: Any) -> str:
+    return f"<b>⏸ Lesson Disabled</b>\n\nLesson <code>#{h(getattr(lesson, 'id', ''))}</code> dinonaktifkan."
+
+
 def age_text(value: Any) -> str:
     if not isinstance(value, datetime):
         return "-"

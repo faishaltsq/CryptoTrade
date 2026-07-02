@@ -6,6 +6,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.config import get_settings
 from app.database.session import SessionLocal
 from app.learning.outcome_tracker import track_pending_outcomes
+from app.learning.post_trade_reviewer import review_pending_completed
 from app.orderflow.orderflow_aggregator import orderflow_aggregator
 from app.scanner import scanner
 
@@ -41,8 +42,10 @@ async def run_scan_now() -> dict:
 async def scan_job() -> None:
     try:
         await run_outcome_tracker()
+        await run_auto_review()
         await run_scan_now()
         await run_outcome_tracker()
+        await run_auto_review()
     except Exception:  # noqa: BLE001
         logger.exception("Scheduled scan failed")
 
@@ -55,6 +58,19 @@ async def run_outcome_tracker() -> dict:
         return result
     except Exception as exc:  # noqa: BLE001
         logger.exception("Outcome tracking failed")
+        return {"status": "failed", "error": str(exc)}
+    finally:
+        db.close()
+
+
+async def run_auto_review() -> dict:
+    db = SessionLocal()
+    try:
+        result = await review_pending_completed(db)
+        logger.info("Auto review completed: %s", result)
+        return result
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Auto review failed")
         return {"status": "failed", "error": str(exc)}
     finally:
         db.close()

@@ -7,6 +7,10 @@ from app.analysis.setup_detector import detect_setup
 from app.config import get_settings
 from app.database.repository import get_setting, save_orderflow_snapshot, save_rejected_setup, save_scan_log, save_signal_log, update_signal_status
 from app.database.session import SessionLocal
+from app.learning.adaptive_scoring import apply_adaptive_scoring
+from app.learning.learning_prompt_builder import learning_context
+from app.learning.lesson_manager import active_lessons_for_prompt
+from app.learning.performance_analyzer import analyze_performance
 from app.market_data.base_provider import MarketDataProvider, ProviderError, empty_optional_market_data
 from app.market_data.provider_factory import configured_provider_names, create_provider
 from app.orderflow.orderflow_analyzer import enrich_orderflow
@@ -63,6 +67,18 @@ class MarketScanner:
                         save_rejected_setup(db, symbol, reason, {**tf_summary, "orderflow": orderflow_summary})
                         continue
                     candidate["provider"] = provider.name
+                    active_lessons = active_lessons_for_prompt(db) if self.settings.enable_signal_learning else []
+                    performance = analyze_performance(db, f"{self.settings.performance_lookback_days}d") if self.settings.enable_signal_learning else {}
+                    candidate["learning_context"] = learning_context(active_lessons, performance)
+                    candidate["active_lessons"] = candidate["learning_context"].get("active_lessons", [])
+                    candidate["ai_prompt_version"] = self.settings.learning_prompt_version
+                    if self.settings.enable_adaptive_scoring:
+                        candidate = apply_adaptive_scoring(candidate, active_lessons, performance)
+                        if candidate.get("adaptive_reject_reason"):
+                            reason = "adaptive_filter: " + candidate["adaptive_reject_reason"]
+                            rejected_reasons.append(reason)
+                            save_rejected_setup(db, symbol, reason, {**tf_summary, "orderflow": orderflow_summary, "adaptive_scoring": candidate.get("adaptive_scoring", {})})
+                            continue
                     candidates += 1
                     if self.settings.enable_orderflow:
                         orderflow_aggregator.start_depth(provider.name, symbol)
@@ -72,6 +88,10 @@ class MarketScanner:
                         ai_response["orderflow"]["conflict"] = True
                         ai_response["broadcast_allowed"] = False
                     ai_response["scores"] = candidate.get("scores", {})
+                    adaptive = candidate.get("adaptive_scoring", {}) or {}
+                    if adaptive.get("confidence_adjustment"):
+                        ai_response["confidence"] = max(0, min(100, int(ai_response.get("confidence") or 0) + int(adaptive["confidence_adjustment"])))
+                        ai_response["adaptive_scoring"] = adaptive
                     ai_response["orderflow_summary"] = candidate.get("orderflow", {})
                     if ai_error:
                         logger.warning("AI response issue symbol=%s error=%s", symbol, ai_error)

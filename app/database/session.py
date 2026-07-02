@@ -41,6 +41,8 @@ def init_db() -> None:
                 "orderflow_score": "INTEGER DEFAULT 0",
                 "risk_score": "INTEGER DEFAULT 0",
                 "final_confidence": "INTEGER DEFAULT 0",
+                "ai_prompt_version": "TEXT DEFAULT ''",
+                "active_lessons_json": "TEXT DEFAULT '[]'",
                 "orderflow_bias": "TEXT DEFAULT ''",
                 "orderflow_conflict": "BOOLEAN DEFAULT 0",
                 "absorption_signal": "TEXT DEFAULT 'none'",

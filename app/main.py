@@ -6,11 +6,12 @@ from app.config import get_settings
 from app.database import repository
 from app.database.session import SessionLocal, get_db, init_db
 from app.market_data.provider_diagnostic import run_market_diagnostic
+from app.learning.post_trade_reviewer import review_signal
 from app.scheduler import run_scan_now, scan_job, scan_state, scheduler_info, start_scheduler, stop_scheduler
 from app.telegram.admin_bot import TelegramBot
 from app.telegram.callbacks import handle_callback
 from app.telegram.commands import command_from_callback, command_keyboard, handle_command, is_admin, pagination_keyboard, signal_list_keyboard
-from app.telegram.message_formatter import format_access_denied_message, format_diagnose_provider_message, format_no_setup_message, format_scan_result_message
+from app.telegram.message_formatter import format_access_denied_message, format_diagnose_provider_message, format_no_setup_message, format_scan_result_message, format_signal_review_message
 from app.telegram.webhook_manager import setup_public_webhook, stop_ngrok
 from app.utils.logger import setup_logging
 
@@ -122,6 +123,8 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)) -> d
         if action == "diagnose_market":
             rows = await run_market_diagnostic()
             await bot.send_admin(format_diagnose_provider_message(rows), command_keyboard())
+        if action and action.startswith("review_signal:"):
+            asyncio.create_task(run_signal_review_and_notify(bot, int(action.split(":", 1)[1])))
         return {"ok": True}
     if "callback_query" in update:
         callback = update["callback_query"]
@@ -139,6 +142,8 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)) -> d
             if action == "diagnose_market":
                 rows = await run_market_diagnostic()
                 await bot.send_admin(format_diagnose_provider_message(rows), command_keyboard())
+            if action and action.startswith("review_signal:"):
+                asyncio.create_task(run_signal_review_and_notify(bot, int(action.split(":", 1)[1])))
             return {"ok": True}
         reply = await handle_callback(db, callback_data, bot)
         await bot.send_admin(reply, command_keyboard())
@@ -151,6 +156,15 @@ async def run_scan_and_notify(bot: TelegramBot) -> None:
     scan_result = result.get("result", result)
     message = format_scan_result_message(scan_result) if scan_result.get("valid_signals", 0) else format_no_setup_message(scan_result)
     await bot.send_admin(message, command_keyboard())
+
+
+async def run_signal_review_and_notify(bot: TelegramBot, signal_id: int) -> None:
+    db = SessionLocal()
+    try:
+        review, error = await review_signal(db, signal_id)
+        await bot.send_admin(format_signal_review_message(review, error), command_keyboard())
+    finally:
+        db.close()
 
 
 def keyboard_for_action(action: str | None) -> dict:

@@ -8,14 +8,22 @@ from app.telegram.message_formatter import (
     format_error_message,
     format_help_message,
     format_last_scan_message,
+    format_learning_status_message,
+    format_lesson_approved_message,
+    format_lesson_detail_message,
+    format_lesson_disabled_message,
+    format_lesson_rejected_message,
+    format_lessons_message,
     format_orderflow_summary_message,
     format_orderflow_top_message,
     format_outcomes_message,
     format_pairs_message,
+    format_performance_message,
     format_pending_signals_message,
     format_set_confidence_message,
     format_set_rr_message,
     format_signal_detail_message,
+    format_signal_review_message,
     format_signal_result_updated_message,
     format_settings_message,
     format_signals_message,
@@ -24,6 +32,8 @@ from app.telegram.message_formatter import (
     format_top_volume_message,
     format_waiting_message,
 )
+from app.learning.lesson_manager import approve_lesson, disable_lesson, reject_lesson
+from app.learning.performance_analyzer import analyze_performance
 
 
 HELP_TEXT = """Commands:
@@ -37,6 +47,14 @@ HELP_TEXT = """Commands:
 /signal_result ID RESULT
 /pending_signals
 /outcomes
+/performance
+/lessons
+/lesson_detail ID
+/approve_lesson ID
+/reject_lesson ID
+/disable_lesson ID
+/review_signal ID
+/learning_status
 /waiting
 /settings
 /set_confidence <value>
@@ -58,6 +76,9 @@ COMMAND_CALLBACKS = {
     "signals": "/signals",
     "pending_signals": "/pending_signals",
     "outcomes": "/outcomes",
+    "performance": "/performance",
+    "lessons": "/lessons",
+    "learning_status": "/learning_status",
     "waiting": "/waiting",
     "settings": "/settings",
     "broadcast_on": "/broadcast_on",
@@ -76,6 +97,7 @@ def command_keyboard() -> dict:
             [{"text": "Pairs", "callback_data": "cmd:pairs"}, {"text": "Top Volume", "callback_data": "cmd:top_volume"}],
             [{"text": "Signals", "callback_data": "cmd:signals"}, {"text": "Waiting", "callback_data": "cmd:waiting"}],
             [{"text": "Pending Signals", "callback_data": "cmd:pending_signals"}, {"text": "Outcomes", "callback_data": "cmd:outcomes"}],
+            [{"text": "Performance", "callback_data": "cmd:performance"}, {"text": "Lessons", "callback_data": "cmd:lessons"}],
             [{"text": "Settings", "callback_data": "cmd:settings"}, {"text": "Last Scan", "callback_data": "cmd:last_scan"}],
             [{"text": "Broadcast ON", "callback_data": "cmd:broadcast_on"}, {"text": "Broadcast OFF", "callback_data": "cmd:broadcast_off"}],
             [{"text": "Diagnose Market", "callback_data": "cmd:diagnose_market"}, {"text": "Help", "callback_data": "cmd:help"}],
@@ -166,6 +188,45 @@ def handle_command(db: Session, text: str) -> tuple[str, str | None]:
         return format_pending_signals_message(repository.get_pending_signals(db)), None
     if cmd == "/outcomes":
         return format_outcomes_message(repository.get_recent_outcomes(db, 50)), None
+    if cmd == "/performance":
+        period = parts[1] if len(parts) > 1 else "30d"
+        if period not in {"7d", "30d", "all"}:
+            return format_error_message("Invalid Period", period, "Gunakan /performance 7d, /performance 30d, atau /performance all"), None
+        return format_performance_message(analyze_performance(db, period)), None
+    if cmd == "/lessons":
+        lessons = repository.get_lessons(db, None, 100)
+        return format_lessons_message(lessons), None
+    if cmd == "/lesson_detail":
+        lesson = parse_lesson_arg(db, parts)
+        if not lesson:
+            return format_error_message("Lesson Not Found", "Gunakan /lesson_detail ID"), None
+        return format_lesson_detail_message(lesson, repository.get_signal_review(db, lesson.source_signal_id)), None
+    if cmd == "/approve_lesson":
+        lesson = parse_lesson_arg(db, parts)
+        if not lesson:
+            return format_error_message("Lesson Not Found", "Gunakan /approve_lesson ID"), None
+        return format_lesson_approved_message(approve_lesson(db, lesson.id)), None
+    if cmd == "/reject_lesson":
+        lesson = parse_lesson_arg(db, parts)
+        if not lesson:
+            return format_error_message("Lesson Not Found", "Gunakan /reject_lesson ID"), None
+        return format_lesson_rejected_message(reject_lesson(db, lesson.id)), None
+    if cmd == "/disable_lesson":
+        lesson = parse_lesson_arg(db, parts)
+        if not lesson:
+            return format_error_message("Lesson Not Found", "Gunakan /disable_lesson ID"), None
+        return format_lesson_disabled_message(disable_lesson(db, lesson.id)), None
+    if cmd == "/review_signal":
+        if len(parts) < 2 or not parts[1].isdigit():
+            return format_error_message("Missing Signal ID", "Gunakan /review_signal ID"), None
+        row = repository.get_signal_by_id(db, int(parts[1]))
+        if not row:
+            return format_error_message("Signal Not Found", parts[1]), None
+        return "<b>🧠 Signal Review Started</b>\n\nReview sedang diproses.", f"review_signal:{row.id}"
+    if cmd == "/learning_status":
+        settings = get_settings()
+        pending_reviews = len(repository.get_closed_unreviewed_signals(db, 100))
+        return format_learning_status_message({"enable_signal_learning": settings.enable_signal_learning, "enable_auto_review": settings.enable_auto_review, "enable_adaptive_scoring": settings.enable_adaptive_scoring, "require_admin_approval_for_lessons": settings.require_admin_approval_for_lessons, "pending_outcomes": len(repository.get_pending_signals(db)), "pending_reviews": pending_reviews, "active_lessons": len(repository.get_lessons(db, "active", 100)), "suggested_lessons": len(repository.get_lessons(db, "suggested", 100)), "lookback_days": settings.performance_lookback_days, "max_lessons": settings.max_active_lessons_in_prompt}), None
     if cmd == "/waiting":
         rows = repository.latest_rejected(db, 200)
         return format_waiting_message(rows, page), f"keyboard:waiting:{page}:{max(1, (len(rows) + 14) // 15)}"
@@ -236,3 +297,9 @@ def manual_close_reason(result: str) -> str:
         "invalidated": "invalidation_rule",
         "manually_closed": "manual_admin_close",
     }.get(result, "manual_admin_close")
+
+
+def parse_lesson_arg(db: Session, parts: list[str]):
+    if len(parts) < 2 or not parts[1].isdigit():
+        return None
+    return repository.get_lesson(db, int(parts[1]))

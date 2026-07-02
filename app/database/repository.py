@@ -2,11 +2,12 @@ import json
 from typing import Any
 from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
-from app.database.models import OrderflowSnapshot, RejectedSetup, ScanLog, Setting, SignalLog, SignalOutcome
+from app.database.models import OrderflowSnapshot, PerformanceSnapshot, RejectedSetup, ScanLog, Setting, SignalLog, SignalOutcome, SignalReview, StrategyLesson
 
 
 FINAL_OUTCOMES = {"hit_tp1", "hit_tp2", "hit_sl", "break_even", "expired", "invalidated", "manually_closed"}
 ALLOWED_OUTCOMES = {"pending", *FINAL_OUTCOMES}
+LESSON_STATUSES = {"suggested", "approved", "rejected", "active", "disabled"}
 
 
 def save_scan_log(db: Session, total_pairs: int, candidates_count: int, valid_signals_count: int, rejected_count: int, summary: dict[str, Any]) -> ScanLog:
@@ -63,6 +64,8 @@ def create_signal_log(db: Session, payload: dict[str, Any], ai_response: dict[st
         orderflow_score=int(scores.get("orderflow_score") or orderflow.get("orderflow_score") or 0),
         risk_score=int(scores.get("risk_score") or 0),
         final_confidence=int(scores.get("final_confidence") or ai_response.get("confidence") or 0),
+        ai_prompt_version=payload.get("ai_prompt_version", ""),
+        active_lessons_json=json.dumps(payload.get("active_lessons", []), default=str),
         orderflow_bias=orderflow.get("orderflow_bias") or (ai_response.get("orderflow", {}) or {}).get("bias", ""),
         orderflow_conflict=bool(orderflow.get("orderflow_conflict") or (ai_response.get("orderflow", {}) or {}).get("conflict", False)),
         absorption_signal=orderflow.get("absorption_signal", "none"),
@@ -225,6 +228,10 @@ def get_recent_outcomes(db: Session, limit: int = 10) -> list[SignalOutcome]:
     return db.query(SignalOutcome).order_by(desc(SignalOutcome.updated_at)).limit(limit).all()
 
 
+def get_closed_unreviewed_signals(db: Session, limit: int = 20) -> list[SignalLog]:
+    return db.query(SignalLog).filter(SignalLog.outcome_status.in_(list(FINAL_OUTCOMES)), SignalLog.review_status.in_(["not_reviewed", "failed"])).order_by(desc(SignalLog.updated_at)).limit(limit).all()
+
+
 def update_signal_outcome(db: Session, signal_id: int, result: str, close_reason: str | None = None, close_price: float | None = None) -> SignalOutcome | None:
     if result not in ALLOWED_OUTCOMES:
         raise ValueError(f"invalid outcome result: {result}")
@@ -242,6 +249,125 @@ def update_signal_outcome(db: Session, signal_id: int, result: str, close_reason
         signal.review_status = "not_reviewed"
     db.add(row)
     db.add(signal)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def create_signal_review(db: Session, signal_id: int, review: dict[str, Any], result: str = "") -> SignalReview:
+    row = SignalReview(
+        signal_id=signal_id,
+        result=result,
+        result_quality=review.get("result_quality", "inconclusive"),
+        main_failure_reason=review.get("main_failure_reason", ""),
+        warning_signs_json=json.dumps(review.get("warning_signs", []), default=str),
+        what_should_have_been_checked_json=json.dumps(review.get("what_should_have_been_checked", []), default=str),
+        recommended_rule_adjustments_json=json.dumps(review.get("recommended_rule_adjustments", []), default=str),
+        confidence_penalty_conditions_json=json.dumps(review.get("confidence_penalty_conditions", []), default=str),
+        confidence_boost_conditions_json=json.dumps(review.get("confidence_boost_conditions", []), default=str),
+        future_lesson=review.get("future_lesson", ""),
+        ai_review_json=json.dumps(review, default=str),
+    )
+    db.add(row)
+    signal = get_signal_by_id(db, signal_id)
+    if signal:
+        signal.review_status = "reviewed"
+        db.add(signal)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def mark_signal_review_failed(db: Session, signal_id: int, raw_error: str) -> SignalReview | None:
+    signal = get_signal_by_id(db, signal_id)
+    if signal:
+        signal.review_status = "failed"
+        db.add(signal)
+    row = SignalReview(signal_id=signal_id, result_quality="inconclusive", main_failure_reason="review_failed", ai_review_json=json.dumps({"error": raw_error}, default=str))
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def get_signal_review(db: Session, signal_id: int) -> SignalReview | None:
+    return db.query(SignalReview).filter(SignalReview.signal_id == signal_id).order_by(desc(SignalReview.id)).first()
+
+
+def create_strategy_lesson(db: Session, lesson: dict[str, Any], source_signal_id: int = 0) -> StrategyLesson:
+    row = StrategyLesson(
+        lesson_text=lesson.get("lesson_text", ""),
+        lesson_type=lesson.get("lesson_type", "warning_note"),
+        affected_condition=lesson.get("affected_condition", ""),
+        affected_symbols_json=json.dumps(lesson.get("affected_symbols", []), default=str),
+        affected_timeframes_json=json.dumps(lesson.get("affected_timeframes", []), default=str),
+        confidence_adjustment=int(lesson.get("confidence_adjustment") or 0),
+        filter_rule_json=json.dumps(lesson.get("filter_rule", {}), default=str),
+        evidence_count=int(lesson.get("evidence_count") or 1),
+        winrate_before=float(lesson.get("winrate_before") or 0),
+        status="suggested",
+        source_signal_id=source_signal_id,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def get_lessons(db: Session, status: str | None = None, limit: int = 50) -> list[StrategyLesson]:
+    query = db.query(StrategyLesson)
+    if status:
+        query = query.filter(StrategyLesson.status == status)
+    return query.order_by(desc(StrategyLesson.updated_at)).limit(limit).all()
+
+
+def get_active_lessons(db: Session, limit: int = 10) -> list[StrategyLesson]:
+    return db.query(StrategyLesson).filter(StrategyLesson.status == "active").order_by(desc(StrategyLesson.evidence_count), desc(StrategyLesson.updated_at)).limit(limit).all()
+
+
+def get_lesson(db: Session, lesson_id: int) -> StrategyLesson | None:
+    return db.get(StrategyLesson, lesson_id)
+
+
+def update_lesson_status(db: Session, lesson_id: int, status: str) -> StrategyLesson | None:
+    if status not in LESSON_STATUSES:
+        raise ValueError(f"invalid lesson status: {status}")
+    from app.utils.time import utc_now
+
+    row = get_lesson(db, lesson_id)
+    if not row:
+        return None
+    row.status = "active" if status == "approved" else status
+    if status == "approved":
+        row.approved_at = utc_now()
+    if status == "rejected":
+        row.rejected_at = utc_now()
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def save_performance_snapshot(db: Session, period: str, stats: dict[str, Any]) -> PerformanceSnapshot:
+    row = PerformanceSnapshot(
+        period=period,
+        total_signals=int(stats.get("total_signals") or 0),
+        winrate=float(stats.get("winrate") or 0),
+        tp1_rate=float(stats.get("tp1_rate") or 0),
+        tp2_rate=float(stats.get("tp2_rate") or 0),
+        sl_rate=float(stats.get("sl_rate") or 0),
+        expired_rate=float(stats.get("expired_rate") or 0),
+        average_rr=float(stats.get("average_rr") or 0),
+        average_mfe=float(stats.get("average_mfe") or 0),
+        average_mae=float(stats.get("average_mae") or 0),
+        profit_factor_estimate=float(stats.get("profit_factor_estimate") or 0),
+        best_symbols_json=json.dumps(stats.get("best_symbols", []), default=str),
+        worst_symbols_json=json.dumps(stats.get("worst_symbols", []), default=str),
+        best_conditions_json=json.dumps(stats.get("best_conditions", []), default=str),
+        worst_conditions_json=json.dumps(stats.get("worst_conditions", []), default=str),
+        summary_json=json.dumps(stats, default=str),
+    )
+    db.add(row)
     db.commit()
     db.refresh(row)
     return row
