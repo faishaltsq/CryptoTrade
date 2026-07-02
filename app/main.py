@@ -4,7 +4,7 @@ from fastapi import Depends, FastAPI, Request
 from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.database import repository
-from app.database.session import get_db, init_db
+from app.database.session import SessionLocal, get_db, init_db
 from app.market_data.provider_diagnostic import run_market_diagnostic
 from app.scheduler import run_scan_now, scan_job, scan_state, scheduler_info, start_scheduler, stop_scheduler
 from app.telegram.admin_bot import TelegramBot
@@ -22,8 +22,17 @@ app = FastAPI(title="Crypto AI Signal Bot", version="0.1.0")
 @app.on_event("startup")
 async def startup() -> None:
     init_db()
+    enable_auto_broadcast_on_launch()
     start_scheduler()
     await setup_public_webhook()
+
+
+def enable_auto_broadcast_on_launch() -> None:
+    db = SessionLocal()
+    try:
+        repository.set_setting(db, "auto_broadcast", "true")
+    finally:
+        db.close()
 
 
 @app.on_event("shutdown")

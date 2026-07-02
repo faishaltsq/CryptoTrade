@@ -5,7 +5,7 @@ import pandas as pd
 from app.ai.deepseek_client import DeepSeekClient
 from app.analysis.setup_detector import detect_setup
 from app.config import get_settings
-from app.database.repository import save_orderflow_snapshot, save_rejected_setup, save_scan_log, save_signal_log, update_signal_status
+from app.database.repository import get_setting, save_orderflow_snapshot, save_rejected_setup, save_scan_log, save_signal_log, update_signal_status
 from app.database.session import SessionLocal
 from app.market_data.base_provider import MarketDataProvider, ProviderError, empty_optional_market_data
 from app.market_data.provider_factory import configured_provider_names, create_provider
@@ -79,7 +79,7 @@ class MarketScanner:
                     if ok:
                         valid_signals += 1
                         await self.broadcaster.send_candidate_to_admin(row.id, ai_response)
-                        if self.settings.auto_broadcast:
+                        if auto_broadcast_enabled(db, self.settings.auto_broadcast):
                             await self.broadcaster.broadcast_channel(ai_response)
                             update_signal_status(db, row.id, "broadcasted", "broadcasted")
                     else:
@@ -286,6 +286,11 @@ def liquidity_wall(bids: list[tuple[float, float]], asks: list[tuple[float, floa
         return "none", 0.0
     side, price, _ = max(levels, key=lambda x: x[2])
     return side, float(price)
+
+
+def auto_broadcast_enabled(db, default: bool) -> bool:
+    value = get_setting(db, "auto_broadcast", str(default))
+    return str(value).lower() in {"1", "true", "yes", "on"}
 
 
 def format_provider_errors(errors: list[dict[str, Any]]) -> str:

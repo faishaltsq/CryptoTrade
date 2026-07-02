@@ -161,7 +161,7 @@ Orderflow is used as a confirmation layer in DeepSeek prompts, not as the primar
 
 ## Orderflow Confirmation Layer
 
-Orderflow is used after technical/SMC setup detection. It is a confirmation layer, not a standalone entry trigger.
+Orderflow is used after market setup detection. It is a confirmation layer, not a standalone entry trigger.
 
 Core rules:
 
@@ -170,6 +170,8 @@ Core rules:
 - If orderflow conflicts with the technical setup, confidence is reduced or the setup becomes `WAIT`.
 - If orderflow supports the setup, confidence can increase.
 - If orderflow data is insufficient, the setup may still be sent to admin, but auto-broadcast is blocked.
+
+Auto-broadcast is enabled on launch by default. Use `/broadcast_off` to pause channel broadcasting at runtime.
 
 Aggressive trade interpretation:
 

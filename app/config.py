@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     binance_spot_data_base_url: str = Field(default="https://data-api.binance.vision", alias="BINANCE_SPOT_DATA_BASE_URL")
     binance_spot_data_ws_url: str = Field(default="wss://data-stream.binance.vision:443/ws", alias="BINANCE_SPOT_DATA_WS_URL")
     binance_futures_fallback_urls: str = Field(default="", alias="BINANCE_FUTURES_FALLBACK_URLS")
-    auto_broadcast: bool = Field(default=False, alias="AUTO_BROADCAST")
+    auto_broadcast: bool = Field(default=True, alias="AUTO_BROADCAST")
     min_confidence: int = Field(default=65, alias="MIN_CONFIDENCE")
     min_risk_reward: float = Field(default=2.0, alias="MIN_RISK_REWARD")
     max_pairs: int = Field(default=80, alias="MAX_PAIRS")
