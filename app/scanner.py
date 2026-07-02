@@ -8,6 +8,7 @@ from app.database.repository import save_orderflow_snapshot, save_rejected_setup
 from app.database.session import SessionLocal
 from app.market_data.base_provider import MarketDataProvider, ProviderError, empty_optional_market_data
 from app.market_data.provider_factory import configured_provider_names, create_provider
+from app.orderflow.orderflow_analyzer import enrich_orderflow
 from app.orderflow.orderflow_aggregator import orderflow_aggregator
 from app.signal.broadcaster import SignalBroadcaster
 from app.signal.validator import validate_for_broadcast
@@ -42,12 +43,13 @@ class MarketScanner:
             for pair in pairs:
                 symbol = pair["symbol"]
                 try:
-                    orderflow_summaries = orderflow_aggregator.summaries(symbol)
-                    for snapshot in orderflow_summaries.values():
-                        save_orderflow_snapshot(db, snapshot)
-                    orderflow_summary = orderflow_summaries["1m"]
                     candles = await self.get_multi_timeframe(provider, symbol)
                     futures_data = await self.get_futures_data(provider, symbol)
+                    orderflow_summaries = orderflow_aggregator.summaries(symbol)
+                    for snapshot in orderflow_summaries.values():
+                        snapshot.update({"open_interest": futures_data.get("open_interest", 0), "open_interest_change": futures_data.get("open_interest_change", 0)})
+                        save_orderflow_snapshot(db, enrich_orderflow(snapshot))
+                    orderflow_summary = orderflow_summaries["1m"]
                     candidate, reason, tf_summary = detect_setup(symbol, candles, futures_data, pair.get("volume_rank", 0), pair.get("spread_pct", 0), orderflow_summary)
                     if not candidate:
                         rejected_reasons.append(reason)
@@ -57,7 +59,12 @@ class MarketScanner:
                     if self.settings.enable_orderflow:
                         orderflow_aggregator.start_depth(provider.name, symbol)
                     ai_response, ai_error = await self.ai.analyze(candidate)
-                    ai_response["orderflow"] = candidate.get("orderflow", {})
+                    ai_response.setdefault("orderflow", {"bias": candidate.get("orderflow", {}).get("orderflow_bias", "insufficient_data"), "confirmation": False, "conflict": candidate.get("orderflow", {}).get("orderflow_conflict", False), "score": candidate.get("orderflow", {}).get("orderflow_score", 0), "absorption_signal": candidate.get("orderflow", {}).get("absorption_signal", "none"), "interpretation": candidate.get("orderflow", {}).get("flow_interpretation", "")})
+                    if candidate.get("orderflow", {}).get("orderflow_conflict"):
+                        ai_response["orderflow"]["conflict"] = True
+                        ai_response["broadcast_allowed"] = False
+                    ai_response["scores"] = candidate.get("scores", {})
+                    ai_response["orderflow_summary"] = candidate.get("orderflow", {})
                     if ai_error:
                         logger.warning("AI response issue symbol=%s error=%s", symbol, ai_error)
                     ok, validation_reason = validate_for_broadcast(ai_response)

@@ -129,6 +129,8 @@ def format_help_message() -> str:
 <code>/top_volume</code> — Pair dengan volume tertinggi
 <code>/diagnose_market</code> — Cek koneksi market provider
 <code>/diagnose_binance</code> — Cek endpoint Binance legacy
+<code>/orderflow BTCUSDT</code> — Ringkasan orderflow symbol
+<code>/orderflow_top</code> — Top aktivitas orderflow
 
 <b>Signals</b>
 <code>/signals</code> — Sinyal valid terakhir
@@ -484,7 +486,9 @@ def format_signal_candidate_admin_message(signal: dict[str, Any]) -> str:
     risk = signal.get("risk", {}) or {}
     entry = signal.get("entry", {}) or {}
     bias = signal.get("bias", {}) or {}
-    of = signal.get("orderflow", {}) or {}
+    of = signal.get("orderflow_summary") or signal.get("orderflow", {}) or {}
+    ai_of = signal.get("orderflow", {}) or {}
+    scores = signal.get("scores", {}) or {}
     decision = signal.get("decision")
     return f"""<b>{side_emoji(decision)} {h(signal.get('symbol'))} — {h(decision)} Candidate</b>
 
@@ -510,6 +514,13 @@ M15: {h(bias.get('M15'))}
 <b>TP2:</b> <code>{h(risk.get('take_profit_2'))}</code>
 
 {SEP}
+<b>Score</b>
+Technical: {h(scores.get('technical_score', 0))}/60
+Orderflow: {h(scores.get('orderflow_score', ai_of.get('score', 0)))}/25
+Risk: {h(scores.get('risk_score', 0))}/15
+Final: {h(scores.get('final_confidence', signal.get('confidence', 0)))}/100
+
+{SEP}
 <b>Reason</b>
 {h(signal.get('reason'))}
 
@@ -519,17 +530,23 @@ M15: {h(bias.get('M15'))}
 
 {SEP}
 <b>Orderflow</b>
+Bias: {h(of.get('orderflow_bias', ai_of.get('bias', 'insufficient_data')))}
 Delta: {h(of.get('volume_delta', 0))}
 CVD: {h(of.get('cumulative_volume_delta', 0))}
+Delta Ratio: {h(of.get('delta_ratio', 0))}
 Imbalance: {h(of.get('orderbook_imbalance', 0))}
 Spread: {h(of.get('spread', 0))}
-Liquidation: {h(of.get('liquidation_spike_detected', False))}"""
+Liquidation: {h(of.get('liquidation_spike_detected', False))}
+OI Change: {h(of.get('open_interest_change', 0))}%
+Absorption: {h(of.get('absorption_signal', ai_of.get('absorption_signal', 'none')))}"""
 
 
 def format_signal_broadcast_channel_message(signal: dict[str, Any]) -> str:
     risk = signal.get("risk", {}) or {}
     entry = signal.get("entry", {}) or {}
     decision = signal.get("decision")
+    of = signal.get("orderflow_summary") or signal.get("orderflow", {}) or {}
+    of_line = of.get("flow_interpretation") or of.get("interpretation") or "Orderflow confirmation included."
     return f"""<b>{side_emoji(decision)} {h(signal.get('symbol'))} — {h(decision)} {h((entry.get('type') or 'limit').upper())}</b>
 
 {SEP}
@@ -549,6 +566,9 @@ TP2: <code>{h(risk.get('take_profit_2'))}</code>
 
 <b>Confidence:</b> {h(signal.get('confidence'))}%
 <b>RR:</b> 1:{h(risk.get('risk_reward'))}
+
+<b>Orderflow:</b>
+{h(str(of_line)[:180])}
 
 {SEP}
 <b>Invalid If</b>
@@ -596,8 +616,35 @@ Sell Liq: {compact_number(summary.get('liquidation_sell_notional'))}
 Spike: {h(summary.get('liquidation_spike_detected'))}
 
 {SEP}
+<b>Open Interest</b>
+OI: {compact_number(summary.get('open_interest'))}
+OI Change: {percent(summary.get('open_interest_change'))}
+
+{SEP}
 <b>Interpretation</b>
-{h(summary.get('interpretation'))}"""
+{h(summary.get('flow_interpretation', summary.get('interpretation')))}"""
+
+
+def format_orderflow_top_message(rows: list[Any]) -> str:
+    if not rows:
+        return format_error_message("No Orderflow Data", "Belum ada snapshot orderflow tersimpan.", "Jalankan /scan_now atau tunggu realtime stream mengumpulkan data.")
+    seen = set()
+    unique = []
+    for row in rows:
+        symbol = getattr(row, "symbol", "")
+        if symbol not in seen:
+            seen.add(symbol)
+            unique.append(row)
+        if len(unique) >= 15:
+            break
+    table = []
+    for idx, row in enumerate(unique, start=1):
+        table.append(f"{idx:02d}  {h(getattr(row, 'symbol', '')):<10} {h(getattr(row, 'orderflow_bias', '')):<9} {compact_number(getattr(row, 'volume_delta', 0)):>9} {h(getattr(row, 'trade_intensity', '')):<9} {percent(getattr(row, 'open_interest_change', 0)):>7}")
+    return f"""<b>📡 Top Orderflow Activity</b>
+
+{SEP}
+<pre>#   Pair       Bias      Delta      Intensity   OI%
+{chr(10).join(table)}</pre>"""
 
 
 def format_error_message(title: str, error: Any, suggestion: str | None = None) -> str:

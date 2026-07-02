@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from app.config import get_settings
+from app.orderflow.orderflow_analyzer import enrich_orderflow
 from app.orderflow.bybit_orderflow import BybitOrderflowProvider
 from app.orderflow.gate_orderflow import GateOrderflowProvider
 from app.orderflow.mexc_orderflow import MEXCOrderflowProvider
@@ -52,7 +53,7 @@ class OrderflowAggregator:
 
 
 def empty_summary(symbol: str, window: str) -> dict:
-    return {"symbol": symbol, "window": window, "buy_volume": 0, "sell_volume": 0, "volume_delta": 0, "delta_ratio": 0, "cumulative_volume_delta": 0, "trade_count": 0, "trade_intensity": "low", "average_trade_size": 0, "large_trade_count": 0, "best_bid": 0, "best_ask": 0, "spread": 0, "bid_depth": 0, "ask_depth": 0, "bid_qty_top_levels": 0, "ask_qty_top_levels": 0, "orderbook_imbalance": 0, "liquidity_wall_side": "none", "liquidity_wall_price": 0, "liquidity_pull_detected": False, "liquidation_buy_notional": 0, "liquidation_sell_notional": 0, "liquidation_spike_detected": False, "interpretation": "No orderflow data yet."}
+    return enrich_orderflow({"symbol": symbol, "window": window, "buy_volume": 0, "sell_volume": 0, "volume_delta": 0, "delta_ratio": 0, "cumulative_volume_delta": 0, "trade_count": 0, "trade_intensity": "low", "average_trade_size": 0, "large_trade_count": 0, "best_bid": 0, "best_ask": 0, "spread": 0, "bid_depth": 0, "ask_depth": 0, "bid_qty_top_levels": 0, "ask_qty_top_levels": 0, "orderbook_imbalance": 0, "liquidity_wall_side": "none", "liquidity_wall_price": 0, "liquidity_pull_detected": False, "liquidation_buy_notional": 0, "liquidation_sell_notional": 0, "liquidation_spike_detected": False})
 
 
 orderflow_aggregator = OrderflowAggregator()

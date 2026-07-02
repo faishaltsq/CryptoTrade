@@ -21,18 +21,27 @@ class Risk(BaseModel):
     risk_reward: float = 0
 
 
+class AIOrderflow(BaseModel):
+    bias: str = "insufficient_data"
+    confirmation: bool = False
+    conflict: bool = False
+    score: int = 0
+    absorption_signal: str = "none"
+    interpretation: str = ""
+
+
 class AIAnalysis(BaseModel):
     symbol: str
     decision: str = Field(pattern="^(BUY|SELL|WAIT)$")
     confidence: int = Field(ge=0, le=100)
     setup_type: str = "none"
     bias: Bias
+    orderflow: AIOrderflow = Field(default_factory=AIOrderflow)
     reason: str = ""
     entry: Entry
     risk: Risk
     invalid_if: str = ""
     broadcast_allowed: bool = False
-    orderflow: dict = Field(default_factory=dict)
 
 
 def parse_ai_response(content: str) -> tuple[dict, str | None]:

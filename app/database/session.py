@@ -30,8 +30,33 @@ def init_db() -> None:
                 conn.execute(text("ALTER TABLE signal_logs ADD COLUMN binance_endpoint_status TEXT DEFAULT ''"))
             if "market_data_error" not in columns:
                 conn.execute(text("ALTER TABLE signal_logs ADD COLUMN market_data_error TEXT DEFAULT ''"))
+            signal_defaults = {
+                "technical_score": "INTEGER DEFAULT 0",
+                "orderflow_score": "INTEGER DEFAULT 0",
+                "risk_score": "INTEGER DEFAULT 0",
+                "final_confidence": "INTEGER DEFAULT 0",
+                "orderflow_bias": "TEXT DEFAULT ''",
+                "orderflow_conflict": "BOOLEAN DEFAULT 0",
+                "absorption_signal": "TEXT DEFAULT 'none'",
+            }
+            for column, ddl in signal_defaults.items():
+                if column not in columns:
+                    conn.execute(text(f"ALTER TABLE signal_logs ADD COLUMN {column} {ddl}"))
             of_columns = {row[1] for row in conn.execute(text("PRAGMA table_info(orderflow_snapshots)"))}
-            if of_columns and "best_bid" not in of_columns:
-                conn.execute(text("ALTER TABLE orderflow_snapshots ADD COLUMN best_bid FLOAT DEFAULT 0"))
-            if of_columns and "best_ask" not in of_columns:
-                conn.execute(text("ALTER TABLE orderflow_snapshots ADD COLUMN best_ask FLOAT DEFAULT 0"))
+            of_defaults = {
+                "price": "FLOAT DEFAULT 0",
+                "best_bid": "FLOAT DEFAULT 0",
+                "best_ask": "FLOAT DEFAULT 0",
+                "bid_depth": "FLOAT DEFAULT 0",
+                "ask_depth": "FLOAT DEFAULT 0",
+                "open_interest": "FLOAT DEFAULT 0",
+                "open_interest_change": "FLOAT DEFAULT 0",
+                "absorption_signal": "TEXT DEFAULT 'none'",
+                "orderflow_bias": "TEXT DEFAULT 'insufficient_data'",
+                "orderflow_conflict": "BOOLEAN DEFAULT 0",
+                "orderflow_score": "INTEGER DEFAULT 0",
+                "flow_interpretation": "TEXT DEFAULT ''",
+            }
+            for column, ddl in of_defaults.items():
+                if of_columns and column not in of_columns:
+                    conn.execute(text(f"ALTER TABLE orderflow_snapshots ADD COLUMN {column} {ddl}"))

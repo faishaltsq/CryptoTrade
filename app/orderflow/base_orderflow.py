@@ -7,7 +7,7 @@ import websockets
 from app.orderflow.liquidation_flow import LiquidationFlowStore
 from app.orderflow.orderbook_flow import OrderBookFlowStore
 from app.orderflow.trade_flow import TradeFlowStore
-from app.orderflow.volume_delta import interpret_orderflow
+from app.orderflow.orderflow_analyzer import enrich_orderflow
 
 
 logger = logging.getLogger(__name__)
@@ -82,8 +82,7 @@ class OrderflowProvider(ABC):
         }
         summary["bid_depth"] = summary.get("bid_qty_top_levels", 0)
         summary["ask_depth"] = summary.get("ask_qty_top_levels", 0)
-        summary["interpretation"] = interpret_orderflow(summary)
-        return summary
+        return enrich_orderflow(summary)
 
     def get_summaries(self, symbol: str) -> dict[str, dict[str, Any]]:
         return {window: self.get_summary(symbol, window) for window in self.windows}

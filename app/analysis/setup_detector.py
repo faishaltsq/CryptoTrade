@@ -6,6 +6,8 @@ from app.analysis.market_structure import analyze_structure
 from app.analysis.risk_reward import calculate_plan
 from app.analysis.smc import fair_value_gap, liquidity_sweep, order_block
 from app.config import get_settings
+from app.orderflow.orderflow_analyzer import enrich_orderflow
+from app.orderflow.orderflow_score import calculate_orderflow_score, calculate_risk_score, calculate_technical_score, clamp
 
 
 def analyze_timeframe(df: pd.DataFrame) -> dict[str, Any]:
@@ -38,7 +40,12 @@ def detect_setup(symbol: str, candles: dict[str, pd.DataFrame], futures_data: di
         return None, "poor risk reward", tf
     if not (tf["M15"]["volume_spike"] or tf["H1"]["volume_spike"]):
         return None, "low volume", tf
-    payload = build_ai_payload(symbol, direction, price, tf, futures_data, volume_rank, plan, orderflow or {})
+    enriched_orderflow = enrich_orderflow({**(orderflow or {}), "open_interest": futures_data.get("open_interest", 0), "open_interest_change": futures_data.get("open_interest_change", 0)}, direction, orderflow_context(tf, direction))
+    enriched_orderflow["orderflow_score"] = calculate_orderflow_score(direction, enriched_orderflow)
+    technical_score = calculate_technical_score(tf, direction)
+    risk_score = calculate_risk_score(plan["risk_reward"], settings.min_risk_reward)
+    final_confidence = clamp(technical_score + enriched_orderflow["orderflow_score"] + risk_score, 0, 100)
+    payload = build_ai_payload(symbol, direction, price, tf, futures_data, volume_rank, plan, enriched_orderflow, technical_score, risk_score, final_confidence)
     return payload, "candidate", tf
 
 
@@ -67,12 +74,13 @@ def reject_reason(tf: dict[str, dict[str, Any]]) -> str:
     return "no clear entry"
 
 
-def build_ai_payload(symbol: str, direction: str, price: float, tf: dict[str, dict[str, Any]], futures_data: dict[str, Any], volume_rank: int, plan: dict[str, Any], orderflow: dict[str, Any]) -> dict[str, Any]:
+def build_ai_payload(symbol: str, direction: str, price: float, tf: dict[str, dict[str, Any]], futures_data: dict[str, Any], volume_rank: int, plan: dict[str, Any], orderflow: dict[str, Any], technical_score: int, risk_score: int, final_confidence: int) -> dict[str, Any]:
     return {
         "symbol": symbol,
         "market": "USDT_PERPETUAL",
         "price": price,
         "candidate_direction": direction,
+        "scores": {"technical_score": technical_score, "orderflow_score": orderflow.get("orderflow_score", 0), "risk_score": risk_score, "final_confidence": final_confidence},
         "timeframes": {
             "D1": {"trend": tf["D1"]["trend"], "structure": tf["D1"]["structure"], "rsi": tf["D1"]["rsi"], "ema_bias": tf["D1"]["ema_bias"], "key_support": tf["D1"]["support"], "key_resistance": tf["D1"]["resistance"]},
             "H4": {"trend": tf["H4"]["trend"], "structure": tf["H4"]["structure"], "poi": poi(tf["H4"], direction), "liquidity": tf["H4"]["liquidity"], "nearest_demand": tf["H4"]["order_block"].get("demand_zone", ""), "nearest_supply": tf["H4"]["order_block"].get("supply_zone", "")},
@@ -96,17 +104,41 @@ def compact_orderflow(orderflow: dict[str, Any]) -> dict[str, Any]:
         return {}
     return {
         "window": orderflow.get("window", "1m"),
+        "price": orderflow.get("price", 0),
         "buy_volume": orderflow.get("buy_volume", 0),
         "sell_volume": orderflow.get("sell_volume", 0),
         "volume_delta": orderflow.get("volume_delta", 0),
         "delta_ratio": orderflow.get("delta_ratio", 0),
         "cumulative_volume_delta": orderflow.get("cumulative_volume_delta", 0),
         "trade_intensity": orderflow.get("trade_intensity", "low"),
+        "large_trade_count": orderflow.get("large_trade_count", 0),
+        "best_bid": orderflow.get("best_bid", 0),
+        "best_ask": orderflow.get("best_ask", 0),
+        "bid_depth": orderflow.get("bid_depth", 0),
+        "ask_depth": orderflow.get("ask_depth", 0),
         "orderbook_imbalance": orderflow.get("orderbook_imbalance", 0),
         "spread": orderflow.get("spread", 0),
         "liquidity_wall_side": orderflow.get("liquidity_wall_side", "none"),
+        "liquidity_wall_price": orderflow.get("liquidity_wall_price", 0),
+        "liquidation_buy_notional": orderflow.get("liquidation_buy_notional", 0),
+        "liquidation_sell_notional": orderflow.get("liquidation_sell_notional", 0),
         "liquidation_spike_detected": orderflow.get("liquidation_spike_detected", False),
-        "interpretation": orderflow.get("interpretation", ""),
+        "open_interest": orderflow.get("open_interest", 0),
+        "open_interest_change": orderflow.get("open_interest_change", 0),
+        "absorption_signal": orderflow.get("absorption_signal", "none"),
+        "orderflow_bias": orderflow.get("orderflow_bias", "insufficient_data"),
+        "orderflow_conflict": orderflow.get("orderflow_conflict", False),
+        "orderflow_score": orderflow.get("orderflow_score", 0),
+        "flow_interpretation": orderflow.get("flow_interpretation", orderflow.get("interpretation", "")),
+    }
+
+
+def orderflow_context(tf: dict[str, dict[str, Any]], direction: str) -> dict[str, Any]:
+    return {
+        "near_support": direction == "BUY" and bool(tf["H1"].get("support")),
+        "near_demand": direction == "BUY" and bool(tf["H1"].get("order_block", {}).get("demand_zone")),
+        "near_resistance": direction == "SELL" and bool(tf["H1"].get("resistance")),
+        "near_supply": direction == "SELL" and bool(tf["H1"].get("order_block", {}).get("supply_zone")),
     }
 
 

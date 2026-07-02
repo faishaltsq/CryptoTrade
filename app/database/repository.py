@@ -22,6 +22,8 @@ def save_scan_log(db: Session, total_pairs: int, candidates_count: int, valid_si
 def save_signal_log(db: Session, payload: dict[str, Any], ai_response: dict[str, Any], status: str = "pending") -> SignalLog:
     risk = ai_response.get("risk", {}) or {}
     entry = ai_response.get("entry", {}) or {}
+    scores = payload.get("scores", {}) or {}
+    orderflow = payload.get("orderflow", {}) or {}
     row = SignalLog(
         symbol=ai_response.get("symbol") or payload.get("symbol", ""),
         decision=ai_response.get("decision", "WAIT"),
@@ -40,6 +42,13 @@ def save_signal_log(db: Session, payload: dict[str, Any], ai_response: dict[str,
         orderflow_summary_json=json.dumps(payload.get("orderflow", {}), default=str),
         binance_endpoint_status=payload.get("binance_endpoint_status", "ok"),
         market_data_error=payload.get("market_data_error", ""),
+        technical_score=int(scores.get("technical_score") or 0),
+        orderflow_score=int(scores.get("orderflow_score") or orderflow.get("orderflow_score") or 0),
+        risk_score=int(scores.get("risk_score") or 0),
+        final_confidence=int(scores.get("final_confidence") or ai_response.get("confidence") or 0),
+        orderflow_bias=orderflow.get("orderflow_bias") or (ai_response.get("orderflow", {}) or {}).get("bias", ""),
+        orderflow_conflict=bool(orderflow.get("orderflow_conflict") or (ai_response.get("orderflow", {}) or {}).get("conflict", False)),
+        absorption_signal=orderflow.get("absorption_signal", "none"),
         status=status,
     )
     db.add(row)
@@ -60,6 +69,7 @@ def save_orderflow_snapshot(db: Session, summary: dict[str, Any]) -> OrderflowSn
     row = OrderflowSnapshot(
         symbol=summary.get("symbol", ""),
         window=summary.get("window", ""),
+        price=float(summary.get("price") or summary.get("best_ask") or summary.get("best_bid") or 0),
         buy_volume=float(summary.get("buy_volume") or 0),
         sell_volume=float(summary.get("sell_volume") or 0),
         volume_delta=float(summary.get("volume_delta") or 0),
@@ -72,12 +82,21 @@ def save_orderflow_snapshot(db: Session, summary: dict[str, Any]) -> OrderflowSn
         best_bid=float(summary.get("best_bid") or 0),
         best_ask=float(summary.get("best_ask") or 0),
         spread=float(summary.get("spread") or 0),
+        bid_depth=float(summary.get("bid_depth") or summary.get("bid_qty_top_levels") or 0),
+        ask_depth=float(summary.get("ask_depth") or summary.get("ask_qty_top_levels") or 0),
         orderbook_imbalance=float(summary.get("orderbook_imbalance") or 0),
         liquidity_wall_side=summary.get("liquidity_wall_side", "none"),
         liquidity_wall_price=float(summary.get("liquidity_wall_price") or 0),
         liquidation_buy_notional=float(summary.get("liquidation_buy_notional") or 0),
         liquidation_sell_notional=float(summary.get("liquidation_sell_notional") or 0),
         liquidation_spike_detected=bool(summary.get("liquidation_spike_detected", False)),
+        open_interest=float(summary.get("open_interest") or 0),
+        open_interest_change=float(summary.get("open_interest_change") or 0),
+        absorption_signal=summary.get("absorption_signal", "none"),
+        orderflow_bias=summary.get("orderflow_bias", "insufficient_data"),
+        orderflow_conflict=bool(summary.get("orderflow_conflict", False)),
+        orderflow_score=int(summary.get("orderflow_score") or 0),
+        flow_interpretation=summary.get("flow_interpretation", summary.get("interpretation", "")),
         raw_summary_json=json.dumps(summary, default=str),
     )
     db.add(row)
@@ -118,6 +137,10 @@ def latest_rejected(db: Session, limit: int = 20) -> list[RejectedSetup]:
 
 def latest_orderflow(db: Session, symbol: str, limit: int = 10) -> list[OrderflowSnapshot]:
     return db.query(OrderflowSnapshot).filter(OrderflowSnapshot.symbol == symbol.upper()).order_by(desc(OrderflowSnapshot.timestamp)).limit(limit).all()
+
+
+def latest_orderflow_activity(db: Session, limit: int = 30) -> list[OrderflowSnapshot]:
+    return db.query(OrderflowSnapshot).filter(OrderflowSnapshot.window == "1m").order_by(desc(OrderflowSnapshot.timestamp)).limit(limit).all()
 
 
 def get_signal(db: Session, signal_id: int) -> SignalLog | None:

@@ -8,6 +8,8 @@ from app.telegram.message_formatter import (
     format_error_message,
     format_help_message,
     format_last_scan_message,
+    format_orderflow_summary_message,
+    format_orderflow_top_message,
     format_pairs_message,
     format_set_confidence_message,
     format_set_rr_message,
@@ -35,6 +37,8 @@ HELP_TEXT = """Commands:
 /broadcast_off
 /last_scan
 /diagnose_market
+/orderflow SYMBOL
+/orderflow_top
 /help"""
 
 
@@ -50,6 +54,7 @@ COMMAND_CALLBACKS = {
     "broadcast_off": "/broadcast_off",
     "last_scan": "/last_scan",
     "diagnose_market": "/diagnose_market",
+    "orderflow_top": "/orderflow_top",
     "help": "/help",
 }
 
@@ -63,6 +68,7 @@ def command_keyboard() -> dict:
             [{"text": "Settings", "callback_data": "cmd:settings"}, {"text": "Last Scan", "callback_data": "cmd:last_scan"}],
             [{"text": "Broadcast ON", "callback_data": "cmd:broadcast_on"}, {"text": "Broadcast OFF", "callback_data": "cmd:broadcast_off"}],
             [{"text": "Diagnose Market", "callback_data": "cmd:diagnose_market"}, {"text": "Help", "callback_data": "cmd:help"}],
+            [{"text": "Orderflow Top", "callback_data": "cmd:orderflow_top"}],
         ]
     }
 
@@ -164,4 +170,14 @@ def handle_command(db: Session, text: str) -> tuple[str, str | None]:
         return format_last_scan_message(scan), None
     if cmd in {"/diagnose_market", "/diagnose_binance"}:
         return "Running market provider diagnostic...", "diagnose_market"
+    if cmd == "/orderflow":
+        if len(parts) < 2:
+            return format_error_message("Missing Symbol", "Gunakan format /orderflow SYMBOL", "Contoh: /orderflow BTCUSDT"), None
+        rows = repository.latest_orderflow(db, parts[1], 1)
+        if not rows:
+            return format_error_message("No Orderflow Data", f"Belum ada data untuk {parts[1].upper()}"), None
+        raw = json.loads(rows[0].raw_summary_json or "{}")
+        return format_orderflow_summary_message(raw), None
+    if cmd == "/orderflow_top":
+        return format_orderflow_top_message(repository.latest_orderflow_activity(db, 100)), None
     return format_error_message("Unknown Command", cmd, "Use /help"), None

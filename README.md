@@ -155,6 +155,45 @@ Orderflow metrics include:
 
 Orderflow is used as a confirmation layer in DeepSeek prompts, not as the primary entry reason.
 
+## Orderflow Confirmation Layer
+
+Orderflow is used after technical/SMC setup detection. It is a confirmation layer, not a standalone entry trigger.
+
+Core rules:
+
+- Technical structure remains the primary signal source.
+- BUY/SELL can only broadcast when technical setup is valid, RR is valid, final confidence meets threshold, and orderflow has no strong conflict.
+- If orderflow conflicts with the technical setup, confidence is reduced or the setup becomes `WAIT`.
+- If orderflow supports the setup, confidence can increase.
+- If orderflow data is insufficient, the setup may still be sent to admin, but auto-broadcast is blocked.
+
+Aggressive trade interpretation:
+
+- Aggressive buy volume means buyer taker pressure, not guaranteed new long positions.
+- Aggressive sell volume means seller taker pressure, not guaranteed new short positions.
+- Buy pressure with open interest rising may suggest new long risk.
+- Buy pressure with open interest falling may suggest short covering.
+- Sell pressure with open interest rising may suggest new short risk.
+- Sell pressure with open interest falling may suggest long closing.
+
+Orderflow scoring:
+
+- Technical score: `0-60`
+- Orderflow score: `-25` to `+25`
+- Risk score: `0-15`
+- Final confidence: `technical_score + orderflow_score + risk_score`, clamped to `0-100`
+
+Telegram commands:
+
+```text
+/orderflow BTCUSDT
+/orderflow_top
+```
+
+`/orderflow SYMBOL` shows the latest 1m orderflow summary for a symbol. `/orderflow_top` lists recent orderflow activity ranked from stored snapshots.
+
+The project remains signal-only and does not perform auto-trading.
+
 ## Running Locally
 
 ```bash

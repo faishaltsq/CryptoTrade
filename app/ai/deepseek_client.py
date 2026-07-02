@@ -29,6 +29,7 @@ class DeepSeekClient:
 
 
 def fallback_wait(market_summary: dict) -> dict:
+    orderflow = market_summary.get("orderflow", {}) or {}
     return {
         "symbol": market_summary.get("symbol", ""),
         "decision": "WAIT",
@@ -40,5 +41,12 @@ def fallback_wait(market_summary: dict) -> dict:
         "risk": {"stop_loss": "", "take_profit_1": "", "take_profit_2": "", "risk_reward": 0},
         "invalid_if": "",
         "broadcast_allowed": False,
-        "orderflow": market_summary.get("orderflow", {}),
+        "orderflow": {
+            "bias": orderflow.get("orderflow_bias", "insufficient_data"),
+            "confirmation": False,
+            "conflict": bool(orderflow.get("orderflow_conflict", False)),
+            "score": int(orderflow.get("orderflow_score", 0) or 0),
+            "absorption_signal": orderflow.get("absorption_signal", "none"),
+            "interpretation": orderflow.get("flow_interpretation", "AI validation unavailable."),
+        },
     }
