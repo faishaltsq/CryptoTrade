@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime, timezone
 from app.utils.time import iso_utc
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.config import get_settings
@@ -11,6 +12,12 @@ logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler()
 scan_lock = asyncio.Lock()
 scan_state = {"running": False, "last_started": None, "last_finished": None, "last_result": None, "last_error": None}
+
+
+def scheduler_info() -> dict:
+    job = scheduler.get_job("market_scan")
+    next_run = job.next_run_time.isoformat() if job and job.next_run_time else None
+    return {"scheduler_running": scheduler.running, "next_run_time": next_run}
 
 
 async def run_scan_now() -> dict:
@@ -39,7 +46,7 @@ async def scan_job() -> None:
 def start_scheduler() -> None:
     settings = get_settings()
     if not scheduler.running:
-        scheduler.add_job(scan_job, "interval", minutes=settings.scan_interval_minutes, id="market_scan", replace_existing=True, next_run_time=None)
+        scheduler.add_job(scan_job, "interval", minutes=settings.scan_interval_minutes, id="market_scan", replace_existing=True, next_run_time=datetime.now(timezone.utc))
         scheduler.start()
         logger.info("Scheduler started interval=%s minutes", settings.scan_interval_minutes)
 

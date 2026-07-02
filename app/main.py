@@ -6,7 +6,7 @@ from app.config import get_settings
 from app.database import repository
 from app.database.session import get_db, init_db
 from app.market_data.provider_diagnostic import run_market_diagnostic
-from app.scheduler import run_scan_now, scan_job, scan_state, start_scheduler, stop_scheduler
+from app.scheduler import run_scan_now, scan_job, scan_state, scheduler_info, start_scheduler, stop_scheduler
 from app.telegram.admin_bot import TelegramBot
 from app.telegram.callbacks import handle_callback
 from app.telegram.commands import command_from_callback, command_keyboard, handle_command, is_admin, pagination_keyboard, signal_list_keyboard
@@ -50,7 +50,7 @@ async def manual_scan_run() -> dict:
 
 @app.get("/scan/state")
 async def api_scan_state() -> dict:
-    return scan_state
+    return {**scan_state, **scheduler_info()}
 
 
 @app.get("/status")
