@@ -133,6 +133,7 @@ def handle_command(db: Session, text: str) -> tuple[str, str | None]:
         return format_top_volume_message(pairs, page), f"keyboard:top_volume:{page}:{max(1, (len(pairs) + 14) // 15)}"
     if cmd == "/signals":
         rows = repository.latest_signals(db)
+        attach_signal_market_state(db, rows)
         return format_signals_message(rows, page), f"keyboard:signals:{page}:{max(1, (len(rows) + 9) // 10)}:{rows[0].id if rows else ''}"
     if cmd == "/waiting":
         rows = repository.latest_rejected(db, 200)
@@ -181,3 +182,14 @@ def handle_command(db: Session, text: str) -> tuple[str, str | None]:
     if cmd == "/orderflow_top":
         return format_orderflow_top_message(repository.latest_orderflow_activity(db, 100)), None
     return format_error_message("Unknown Command", cmd, "Use /help"), None
+
+
+def attach_signal_market_state(db: Session, rows: list) -> None:
+    for row in rows:
+        snapshots = repository.latest_orderflow(db, getattr(row, "symbol", ""), 1)
+        if not snapshots:
+            continue
+        snapshot = snapshots[0]
+        current_price = float(getattr(snapshot, "price", 0) or getattr(snapshot, "best_ask", 0) or getattr(snapshot, "best_bid", 0) or 0)
+        if current_price > 0:
+            setattr(row, "current_price", current_price)

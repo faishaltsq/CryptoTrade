@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from html import escape
 from math import ceil
 from typing import Any, Iterable
@@ -682,11 +682,71 @@ def format_signal_row(item: dict[str, Any]) -> str:
 
 def format_signal_log_card(row: Any) -> str:
     decision = getattr(row, "decision", "WAIT")
+    outcome = signal_outcome(row)
+    current_price = getattr(row, "current_price", 0)
+    validity = signal_validity(row, outcome)
+    price_line = f"\n<b>Price Now:</b> <code>{h(price(current_price, getattr(row, 'symbol', '')))}</code>" if current_price else ""
     return f"""{side_emoji(decision)} <b>{h(getattr(row, 'symbol', ''))}</b> — <b>{h(decision)} LIMIT</b>
 <b>Confidence:</b> {h(getattr(row, 'confidence', 0))}%
 <b>RR:</b> 1:{h(getattr(row, 'risk_reward', 0))}
 <b>Entry:</b> <code>{h(getattr(row, 'entry_zone', ''))}</code>
 <b>SL:</b> <code>{h(getattr(row, 'stop_loss', ''))}</code>
-<b>TP:</b> <code>{h(getattr(row, 'take_profit_1', ''))}</code> / <code>{h(getattr(row, 'take_profit_2', ''))}</code>
-<b>Status:</b> {h(getattr(row, 'status', ''))}
+<b>TP:</b> <code>{h(getattr(row, 'take_profit_1', ''))}</code> / <code>{h(getattr(row, 'take_profit_2', ''))}</code>{price_line}
+<b>Status:</b> {h(outcome)}
+<b>Est. Valid:</b> {h(validity)}
 <b>Time:</b> {time_wib(getattr(row, 'timestamp', None))}"""
+
+
+def signal_outcome(row: Any) -> str:
+    current_price = parse_float(getattr(row, "current_price", 0))
+    if current_price <= 0:
+        return getattr(row, "status", "pending") or "pending"
+    decision = str(getattr(row, "decision", "")).upper()
+    stop_loss = parse_float(getattr(row, "stop_loss", 0))
+    tp1 = parse_float(getattr(row, "take_profit_1", 0))
+    tp2 = parse_float(getattr(row, "take_profit_2", 0))
+    if decision == "BUY":
+        if stop_loss and current_price <= stop_loss:
+            return "LOSS (SL hit)"
+        if tp2 and current_price >= tp2:
+            return "WIN (TP2 hit)"
+        if tp1 and current_price >= tp1:
+            return "WIN (TP1 hit)"
+    if decision == "SELL":
+        if stop_loss and current_price >= stop_loss:
+            return "LOSS (SL hit)"
+        if tp2 and current_price <= tp2:
+            return "WIN (TP2 hit)"
+        if tp1 and current_price <= tp1:
+            return "WIN (TP1 hit)"
+    if signal_expired(row):
+        return "EXPIRED"
+    return getattr(row, "status", "pending") or "pending"
+
+
+def signal_validity(row: Any, outcome: str) -> str:
+    timestamp = getattr(row, "timestamp", None)
+    if not isinstance(timestamp, datetime):
+        return "-"
+    valid_until = timestamp + timedelta(hours=4)
+    suffix = ""
+    if outcome == "EXPIRED" or datetime.now(timezone.utc) > valid_until.replace(tzinfo=valid_until.tzinfo or timezone.utc):
+        suffix = " (expired)"
+    return f"until {time_wib(valid_until)}{suffix}"
+
+
+def signal_expired(row: Any) -> bool:
+    timestamp = getattr(row, "timestamp", None)
+    if not isinstance(timestamp, datetime):
+        return False
+    valid_until = timestamp + timedelta(hours=4)
+    if not valid_until.tzinfo:
+        valid_until = valid_until.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) > valid_until
+
+
+def parse_float(value: Any) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
