@@ -15,8 +15,7 @@ def validate_for_broadcast(ai_response: dict) -> tuple[bool, str]:
         return False, "ai_broadcast_not_allowed"
     if (ai_response.get("orderflow") or {}).get("conflict") is True:
         return False, "orderflow_conflict"
-    entry = ai_response.get("entry", {}) or {}
-    required = [entry.get("zone"), risk.get("stop_loss"), risk.get("take_profit_1"), risk.get("take_profit_2")]
+    required = [risk.get("entry_zone"), risk.get("stop_loss"), risk.get("take_profit_1"), risk.get("take_profit_2")]
     if any(not x for x in required):
         return False, "missing_entry_sl_tp"
     orderflow = ai_response.get("orderflow") or {}

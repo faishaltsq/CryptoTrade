@@ -2,44 +2,39 @@ import json
 from pydantic import BaseModel, Field, ValidationError
 
 
-class Bias(BaseModel):
-    D1: str = "neutral"
-    H4: str = "neutral"
-    H1: str = "neutral"
-    M15: str = "neutral"
-
-
-class Entry(BaseModel):
-    type: str = "none"
-    zone: str = ""
-
-
-class Risk(BaseModel):
-    stop_loss: str = ""
-    take_profit_1: str = ""
-    take_profit_2: str = ""
-    risk_reward: float = 0
+class MarketSummary(BaseModel):
+    higher_timeframe_bias: str = "neutral"
+    lower_timeframe_context: str = "neutral"
+    market_regime: str = "unclear"
+    main_reason: str = ""
 
 
 class AIOrderflow(BaseModel):
     bias: str = "insufficient_data"
     confirmation: bool = False
     conflict: bool = False
-    score: int = 0
-    absorption_signal: str = "none"
     interpretation: str = ""
+
+
+class Risk(BaseModel):
+    entry_type: str = "none"
+    entry_zone: str = ""
+    stop_loss: str = ""
+    take_profit_1: str = ""
+    take_profit_2: str = ""
+    risk_reward: float = 0
 
 
 class AIAnalysis(BaseModel):
     symbol: str
     decision: str = Field(pattern="^(BUY|SELL|WAIT)$")
     confidence: int = Field(ge=0, le=100)
-    setup_type: str = "none"
-    bias: Bias
+    analysis_method_used: list[str] = Field(default_factory=list)
+    market_summary: MarketSummary = Field(default_factory=MarketSummary)
+    setup_type: str = "no_trade"
     orderflow: AIOrderflow = Field(default_factory=AIOrderflow)
     reason: str = ""
-    entry: Entry
-    risk: Risk
+    risk: Risk = Field(default_factory=Risk)
     invalid_if: str = ""
     broadcast_allowed: bool = False
 

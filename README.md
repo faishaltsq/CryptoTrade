@@ -1,11 +1,14 @@
 # CryptoTrade
 
-CryptoTrade is a signal-only crypto market analysis bot. It scans public perpetual futures market data, detects technical setup candidates, validates them with DeepSeek, sends candidates to a Telegram admin bot, and broadcasts approved signals to a Telegram channel.
+CryptoTrade is an AI-driven signal-only crypto market analysis bot. It extracts objective market features from public perpetual futures data, sends structured market context to DeepSeek for analysis, then routes validated signals to a Telegram admin bot for approval before broadcasting to a channel.
+
+The bot does not hardcode a single trading method. DeepSeek chooses the most relevant analysis approach based on the available data: trend, momentum, volatility, price action, support/resistance, volume, derivatives data, orderflow, and risk-reward.
 
 The project does not place trades. It does not use private exchange APIs, trading endpoints, account endpoints, balance endpoints, position endpoints, leverage endpoints, or withdrawal permissions.
 
 ## Features
 
+- AI-driven market analysis via DeepSeek. No hardcoded single trading method.
 - Multi-provider public market data architecture.
 - Primary provider: Bybit.
 - Fallback provider: OKX.
@@ -13,8 +16,9 @@ The project does not place trades. It does not use private exchange APIs, tradin
 - USDT perpetual market focus.
 - Automatic provider failover when the primary provider fails.
 - Public WebSocket orderflow layer for realtime trade, ticker, kline, depth, and liquidation data where supported.
+- Orderflow used as confirmation layer only, not standalone entry trigger.
 - Multi-timeframe candles: `15m`, `1h`, `4h`, `1d`.
-- Technical analysis: EMA 50/200, RSI 14, ATR 14, swing high/low, market structure, BOS/CHoCH, liquidity sweep, order block, FVG, volume spike, risk-reward.
+- Market feature extraction: EMA, RSI, ATR, swing points, market structure, price zones, volume spikes, risk-reward.
 - DeepSeek strict JSON validation.
 - Telegram admin approval flow with inline buttons.
 - Telegram channel broadcast after approval.

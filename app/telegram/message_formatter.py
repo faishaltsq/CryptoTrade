@@ -484,34 +484,40 @@ def format_diagnose_provider_message(result: list[dict[str, Any]]) -> str:
 
 def format_signal_candidate_admin_message(signal: dict[str, Any]) -> str:
     risk = signal.get("risk", {}) or {}
-    entry = signal.get("entry", {}) or {}
-    bias = signal.get("bias", {}) or {}
+    market = signal.get("market_summary", {}) or {}
     of = signal.get("orderflow_summary") or signal.get("orderflow", {}) or {}
     ai_of = signal.get("orderflow", {}) or {}
     scores = signal.get("scores", {}) or {}
+    methods = signal.get("analysis_method_used", []) or []
     decision = signal.get("decision")
+    setup_label = signal.get("setup_type", "no_trade").replace("_", " ").title()
+    method_str = " | ".join(m.replace("_", " ").title() for m in methods) or "General Analysis"
     return f"""<b>{side_emoji(decision)} {h(signal.get('symbol'))} — {h(decision)} Candidate</b>
 
 {SEP}
 <b>Decision:</b> {h(decision)}
 <b>Confidence:</b> {h(signal.get('confidence'))}%
-<b>Setup:</b> {h(signal.get('setup_type'))}
-<b>RR:</b> 1:{h(risk.get('risk_reward'))}
+<b>Market Regime:</b> {h(market.get('market_regime', 'unclear'))}
 <b>Provider:</b> {h(signal.get('provider', '-'))}
+<b>RR:</b> 1:{h(risk.get('risk_reward'))}
 
 {SEP}
-<b>Bias</b>
-D1: {h(bias.get('D1'))}
-H4: {h(bias.get('H4'))}
-H1: {h(bias.get('H1'))}
-M15: {h(bias.get('M15'))}
+<b>Analysis Used:</b>
+{method_str}
+
+{SEP}
+<b>Market Context:</b>
+HTF Bias: {h(market.get('higher_timeframe_bias', 'neutral'))}
+LTF Context: {h(market.get('lower_timeframe_context', 'neutral'))}
+Main Reason:
+{h(market.get('main_reason', signal.get('reason', '')))}
 
 {SEP}
 <b>Trade Plan</b>
-<b>Entry:</b> <code>{h(entry.get('zone'))}</code>
-<b>SL:</b> <code>{h(risk.get('stop_loss'))}</code>
-<b>TP1:</b> <code>{h(risk.get('take_profit_1'))}</code>
-<b>TP2:</b> <code>{h(risk.get('take_profit_2'))}</code>
+Entry: <code>{h(risk.get('entry_zone'))}</code>
+SL: <code>{h(risk.get('stop_loss'))}</code>
+TP1: <code>{h(risk.get('take_profit_1'))}</code>
+TP2: <code>{h(risk.get('take_profit_2'))}</code>
 
 {SEP}
 <b>Score</b>
@@ -531,27 +537,25 @@ Final: {h(scores.get('final_confidence', signal.get('confidence', 0)))}/100
 {SEP}
 <b>Orderflow</b>
 Bias: {h(of.get('orderflow_bias', ai_of.get('bias', 'insufficient_data')))}
-Delta: {h(of.get('volume_delta', 0))}
-CVD: {h(of.get('cumulative_volume_delta', 0))}
-Delta Ratio: {h(of.get('delta_ratio', 0))}
-Imbalance: {h(of.get('orderbook_imbalance', 0))}
-Spread: {h(of.get('spread', 0))}
-Liquidation: {h(of.get('liquidation_spike_detected', False))}
-OI Change: {h(of.get('open_interest_change', 0))}%
-Absorption: {h(of.get('absorption_signal', ai_of.get('absorption_signal', 'none')))}"""
+Confirmation: {h(ai_of.get('confirmation', False))}
+Conflict: {h(ai_of.get('conflict', False))}
+Interpretation:
+{h(of.get('flow_interpretation', ai_of.get('interpretation', '')))}"""
 
 
 def format_signal_broadcast_channel_message(signal: dict[str, Any]) -> str:
     risk = signal.get("risk", {}) or {}
-    entry = signal.get("entry", {}) or {}
     decision = signal.get("decision")
     of = signal.get("orderflow_summary") or signal.get("orderflow", {}) or {}
     of_line = of.get("flow_interpretation") or of.get("interpretation") or "Orderflow confirmation included."
-    return f"""<b>{side_emoji(decision)} {h(signal.get('symbol'))} — {h(decision)} {h((entry.get('type') or 'limit').upper())}</b>
+    setup_label = signal.get("setup_type", "no_trade").replace("_", " ").title()
+    market = signal.get("market_summary", {}) or {}
+    context = market.get("main_reason", "") or of_line
+    return f"""<b>{side_emoji(decision)} {h(signal.get('symbol'))} — {h(decision)} {h((risk.get('entry_type') or 'limit').upper())}</b>
 
 {SEP}
 <b>Entry Zone</b>
-<code>{h(entry.get('zone'))}</code>
+<code>{h(risk.get('entry_zone'))}</code>
 
 <b>Stop Loss</b>
 <code>{h(risk.get('stop_loss'))}</code>
@@ -561,14 +565,11 @@ TP1: <code>{h(risk.get('take_profit_1'))}</code>
 TP2: <code>{h(risk.get('take_profit_2'))}</code>
 
 {SEP}
-<b>Setup</b>
-{h(signal.get('setup_type'))}
-
 <b>Confidence:</b> {h(signal.get('confidence'))}%
 <b>RR:</b> 1:{h(risk.get('risk_reward'))}
 
-<b>Orderflow:</b>
-{h(str(of_line)[:180])}
+<b>Market Context:</b>
+{h(str(context)[:180])}
 
 {SEP}
 <b>Invalid If</b>
