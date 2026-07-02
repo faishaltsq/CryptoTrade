@@ -31,6 +31,12 @@ def init_db() -> None:
             if "market_data_error" not in columns:
                 conn.execute(text("ALTER TABLE signal_logs ADD COLUMN market_data_error TEXT DEFAULT ''"))
             signal_defaults = {
+                "provider": "TEXT DEFAULT ''",
+                "market_type": "TEXT DEFAULT 'USDT Perpetual'",
+                "entry_type": "TEXT DEFAULT 'limit'",
+                "market_regime": "TEXT DEFAULT ''",
+                "analysis_method_json": "TEXT DEFAULT '[]'",
+                "derivatives_summary_json": "TEXT DEFAULT '{}'",
                 "technical_score": "INTEGER DEFAULT 0",
                 "orderflow_score": "INTEGER DEFAULT 0",
                 "risk_score": "INTEGER DEFAULT 0",
@@ -38,6 +44,8 @@ def init_db() -> None:
                 "orderflow_bias": "TEXT DEFAULT ''",
                 "orderflow_conflict": "BOOLEAN DEFAULT 0",
                 "absorption_signal": "TEXT DEFAULT 'none'",
+                "outcome_status": "TEXT DEFAULT 'pending'",
+                "review_status": "TEXT DEFAULT 'not_reviewed'",
             }
             for column, ddl in signal_defaults.items():
                 if column not in columns:

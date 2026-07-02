@@ -2,7 +2,11 @@ import json
 from typing import Any
 from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
-from app.database.models import OrderflowSnapshot, RejectedSetup, ScanLog, Setting, SignalLog
+from app.database.models import OrderflowSnapshot, RejectedSetup, ScanLog, Setting, SignalLog, SignalOutcome
+
+
+FINAL_OUTCOMES = {"hit_tp1", "hit_tp2", "hit_sl", "break_even", "expired", "invalidated", "manually_closed"}
+ALLOWED_OUTCOMES = {"pending", *FINAL_OUTCOMES}
 
 
 def save_scan_log(db: Session, total_pairs: int, candidates_count: int, valid_signals_count: int, rejected_count: int, summary: dict[str, Any]) -> ScanLog:
@@ -20,26 +24,39 @@ def save_scan_log(db: Session, total_pairs: int, candidates_count: int, valid_si
 
 
 def save_signal_log(db: Session, payload: dict[str, Any], ai_response: dict[str, Any], status: str = "pending") -> SignalLog:
+    return create_signal_log(db, payload, ai_response, status)
+
+
+def create_signal_log(db: Session, payload: dict[str, Any], ai_response: dict[str, Any], status: str = "pending", broadcast_status: str | None = None) -> SignalLog:
     risk = ai_response.get("risk", {}) or {}
     scores = payload.get("scores", {}) or {}
     orderflow = payload.get("orderflow", {}) or {}
+    market = ai_response.get("market_summary", {}) or payload.get("market_summary", {}) or {}
     entry_zone = risk.get("entry_zone", "") or (ai_response.get("entry", {}) or {}).get("zone", "")
+    decision = ai_response.get("decision", "WAIT")
+    resolved_broadcast_status = broadcast_status or ("pending_admin" if status == "pending" and decision in {"BUY", "SELL"} else "skipped")
     row = SignalLog(
         symbol=ai_response.get("symbol") or payload.get("symbol", ""),
-        decision=ai_response.get("decision", "WAIT"),
+        provider=payload.get("provider", ""),
+        market_type=payload.get("market_type") or payload.get("market", "USDT Perpetual"),
+        decision=decision,
         confidence=int(ai_response.get("confidence") or 0),
         setup_type=ai_response.get("setup_type", "none"),
+        entry_type=risk.get("entry_type", "limit"),
         entry_zone=entry_zone,
         stop_loss=str(risk.get("stop_loss", "")),
         take_profit_1=str(risk.get("take_profit_1", "")),
         take_profit_2=str(risk.get("take_profit_2", "")),
         risk_reward=float(risk.get("risk_reward") or 0),
+        market_regime=market.get("market_regime", ""),
+        analysis_method_json=json.dumps(ai_response.get("analysis_method_used", []), default=str),
         reason=ai_response.get("reason", ""),
         invalid_if=ai_response.get("invalid_if", ""),
         broadcast_allowed=bool(ai_response.get("broadcast_allowed", False)),
-        broadcast_status="pending",
+        broadcast_status=resolved_broadcast_status,
         ai_response_json=json.dumps(ai_response, default=str),
         orderflow_summary_json=json.dumps(payload.get("orderflow", {}), default=str),
+        derivatives_summary_json=json.dumps(payload.get("derivatives_data", payload.get("futures_data", {})), default=str),
         binance_endpoint_status=payload.get("binance_endpoint_status", "ok"),
         market_data_error=payload.get("market_data_error", ""),
         technical_score=int(scores.get("technical_score") or 0),
@@ -50,6 +67,35 @@ def save_signal_log(db: Session, payload: dict[str, Any], ai_response: dict[str,
         orderflow_conflict=bool(orderflow.get("orderflow_conflict") or (ai_response.get("orderflow", {}) or {}).get("conflict", False)),
         absorption_signal=orderflow.get("absorption_signal", "none"),
         status=status,
+        outcome_status="pending",
+        review_status="not_reviewed",
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    if decision in {"BUY", "SELL"}:
+        create_signal_outcome(db, row.id, {})
+    return row
+
+
+def create_signal_outcome(db: Session, signal_id: int, outcome_data: dict[str, Any] | None = None) -> SignalOutcome | None:
+    signal = get_signal_by_id(db, signal_id)
+    if not signal:
+        return None
+    existing = get_signal_outcome(db, signal_id)
+    if existing:
+        return existing
+    data = outcome_data or {}
+    row = SignalOutcome(
+        signal_id=signal.id,
+        symbol=signal.symbol,
+        decision=signal.decision,
+        entry_price=parse_entry_price(signal.entry_zone),
+        stop_loss=parse_float(signal.stop_loss),
+        take_profit_1=parse_float(signal.take_profit_1),
+        take_profit_2=parse_float(signal.take_profit_2),
+        result=data.get("result", "pending"),
+        close_reason=data.get("close_reason", ""),
     )
     db.add(row)
     db.commit()
@@ -128,6 +174,14 @@ def latest_signals(db: Session, limit: int = 10) -> list[SignalLog]:
     return db.query(SignalLog).join(sub, (SignalLog.symbol == sub.c.symbol) & (SignalLog.timestamp == sub.c.max_ts)).order_by(desc(SignalLog.timestamp)).limit(limit).all()
 
 
+def get_recent_signals(db: Session, limit: int = 10) -> list[SignalLog]:
+    return db.query(SignalLog).filter(SignalLog.decision.in_(["BUY", "SELL"])).order_by(desc(SignalLog.timestamp)).limit(limit).all()
+
+
+def get_pending_signals(db: Session) -> list[SignalLog]:
+    return db.query(SignalLog).filter(SignalLog.outcome_status == "pending", SignalLog.decision.in_(["BUY", "SELL"])).order_by(desc(SignalLog.timestamp)).all()
+
+
 def waiting_signals(db: Session, limit: int = 10) -> list[SignalLog]:
     return db.query(SignalLog).filter(SignalLog.decision == "WAIT").order_by(desc(SignalLog.timestamp)).limit(limit).all()
 
@@ -148,6 +202,64 @@ def get_signal(db: Session, signal_id: int) -> SignalLog | None:
     return db.get(SignalLog, signal_id)
 
 
+def get_signal_by_id(db: Session, signal_id: int) -> SignalLog | None:
+    return get_signal(db, signal_id)
+
+
+def update_signal_broadcast_status(db: Session, signal_id: int, status: str) -> SignalLog | None:
+    row = get_signal_by_id(db, signal_id)
+    if not row:
+        return None
+    row.broadcast_status = status
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def get_signal_outcome(db: Session, signal_id: int) -> SignalOutcome | None:
+    return db.query(SignalOutcome).filter(SignalOutcome.signal_id == signal_id).order_by(desc(SignalOutcome.id)).first()
+
+
+def get_recent_outcomes(db: Session, limit: int = 10) -> list[SignalOutcome]:
+    return db.query(SignalOutcome).order_by(desc(SignalOutcome.updated_at)).limit(limit).all()
+
+
+def update_signal_outcome(db: Session, signal_id: int, result: str, close_reason: str | None = None, close_price: float | None = None) -> SignalOutcome | None:
+    if result not in ALLOWED_OUTCOMES:
+        raise ValueError(f"invalid outcome result: {result}")
+    row = get_signal_outcome(db, signal_id) or create_signal_outcome(db, signal_id, {})
+    signal = get_signal_by_id(db, signal_id)
+    if not row or not signal:
+        return None
+    row.result = result
+    if close_reason:
+        row.close_reason = close_reason
+    if close_price is not None:
+        row.close_price = float(close_price)
+    signal.outcome_status = result
+    if result != "pending":
+        signal.review_status = "not_reviewed"
+    db.add(row)
+    db.add(signal)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def update_signal_outcome_status(db: Session, signal_id: int, outcome_status: str) -> SignalLog | None:
+    if outcome_status not in ALLOWED_OUTCOMES:
+        raise ValueError(f"invalid outcome status: {outcome_status}")
+    row = get_signal_by_id(db, signal_id)
+    if not row:
+        return None
+    row.outcome_status = outcome_status
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
 def update_signal_status(db: Session, signal_id: int, status: str, broadcast_status: str | None = None) -> SignalLog | None:
     row = db.get(SignalLog, signal_id)
     if not row:
@@ -159,3 +271,22 @@ def update_signal_status(db: Session, signal_id: int, status: str, broadcast_sta
     db.commit()
     db.refresh(row)
     return row
+
+
+def parse_float(value: Any) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def parse_entry_price(entry_zone: str) -> float:
+    cleaned = str(entry_zone or "").replace(" ", "")
+    if not cleaned:
+        return 0.0
+    parts = [x for x in cleaned.replace("–", "-").split("-") if x]
+    values = [parse_float(x) for x in parts]
+    values = [x for x in values if x > 0]
+    if not values:
+        return 0.0
+    return sum(values) / len(values)

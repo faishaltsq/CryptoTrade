@@ -10,9 +10,13 @@ from app.telegram.message_formatter import (
     format_last_scan_message,
     format_orderflow_summary_message,
     format_orderflow_top_message,
+    format_outcomes_message,
     format_pairs_message,
+    format_pending_signals_message,
     format_set_confidence_message,
     format_set_rr_message,
+    format_signal_detail_message,
+    format_signal_result_updated_message,
     format_settings_message,
     format_signals_message,
     format_start_message,
@@ -29,6 +33,10 @@ HELP_TEXT = """Commands:
 /pairs
 /top_volume
 /signals
+/signal_detail ID
+/signal_result ID RESULT
+/pending_signals
+/outcomes
 /waiting
 /settings
 /set_confidence <value>
@@ -48,6 +56,8 @@ COMMAND_CALLBACKS = {
     "pairs": "/pairs",
     "top_volume": "/top_volume",
     "signals": "/signals",
+    "pending_signals": "/pending_signals",
+    "outcomes": "/outcomes",
     "waiting": "/waiting",
     "settings": "/settings",
     "broadcast_on": "/broadcast_on",
@@ -65,6 +75,7 @@ def command_keyboard() -> dict:
             [{"text": "Status", "callback_data": "cmd:status"}, {"text": "Scan Now", "callback_data": "cmd:scan_now"}],
             [{"text": "Pairs", "callback_data": "cmd:pairs"}, {"text": "Top Volume", "callback_data": "cmd:top_volume"}],
             [{"text": "Signals", "callback_data": "cmd:signals"}, {"text": "Waiting", "callback_data": "cmd:waiting"}],
+            [{"text": "Pending Signals", "callback_data": "cmd:pending_signals"}, {"text": "Outcomes", "callback_data": "cmd:outcomes"}],
             [{"text": "Settings", "callback_data": "cmd:settings"}, {"text": "Last Scan", "callback_data": "cmd:last_scan"}],
             [{"text": "Broadcast ON", "callback_data": "cmd:broadcast_on"}, {"text": "Broadcast OFF", "callback_data": "cmd:broadcast_off"}],
             [{"text": "Diagnose Market", "callback_data": "cmd:diagnose_market"}, {"text": "Help", "callback_data": "cmd:help"}],
@@ -132,9 +143,29 @@ def handle_command(db: Session, text: str) -> tuple[str, str | None]:
         pairs = [{**x, "provider": provider} for x in summary.get("top_volume", []) if isinstance(x, dict)]
         return format_top_volume_message(pairs, page), f"keyboard:top_volume:{page}:{max(1, (len(pairs) + 14) // 15)}"
     if cmd == "/signals":
-        rows = repository.latest_signals(db)
+        rows = repository.get_recent_signals(db, 100)
         attach_signal_market_state(db, rows)
         return format_signals_message(rows, page), f"keyboard:signals:{page}:{max(1, (len(rows) + 9) // 10)}:{rows[0].id if rows else ''}"
+    if cmd == "/signal_detail":
+        if len(parts) < 2 or not parts[1].isdigit():
+            return format_error_message("Missing Signal ID", "Gunakan format /signal_detail ID", "Contoh: /signal_detail 123"), None
+        row = repository.get_signal_by_id(db, int(parts[1]))
+        if not row:
+            return format_error_message("Signal Not Found", parts[1]), None
+        return format_signal_detail_message(row, repository.get_signal_outcome(db, row.id)), None
+    if cmd == "/signal_result":
+        allowed = sorted(repository.FINAL_OUTCOMES)
+        if len(parts) < 3 or not parts[1].isdigit() or parts[2] not in allowed:
+            return format_error_message("Invalid Signal Result", "Gunakan format /signal_result ID RESULT", "Allowed: " + ", ".join(allowed)), None
+        row = repository.get_signal_by_id(db, int(parts[1]))
+        if not row:
+            return format_error_message("Signal Not Found", parts[1]), None
+        outcome = repository.update_signal_outcome(db, row.id, parts[2], manual_close_reason(parts[2]))
+        return format_signal_result_updated_message(row, outcome), None
+    if cmd == "/pending_signals":
+        return format_pending_signals_message(repository.get_pending_signals(db)), None
+    if cmd == "/outcomes":
+        return format_outcomes_message(repository.get_recent_outcomes(db, 50)), None
     if cmd == "/waiting":
         rows = repository.latest_rejected(db, 200)
         return format_waiting_message(rows, page), f"keyboard:waiting:{page}:{max(1, (len(rows) + 14) // 15)}"
@@ -193,3 +224,15 @@ def attach_signal_market_state(db: Session, rows: list) -> None:
         current_price = float(getattr(snapshot, "price", 0) or getattr(snapshot, "best_ask", 0) or getattr(snapshot, "best_bid", 0) or 0)
         if current_price > 0:
             setattr(row, "current_price", current_price)
+
+
+def manual_close_reason(result: str) -> str:
+    return {
+        "hit_tp1": "tp1_hit",
+        "hit_tp2": "tp2_hit",
+        "hit_sl": "sl_hit",
+        "break_even": "be_hit",
+        "expired": "expired_by_time",
+        "invalidated": "invalidation_rule",
+        "manually_closed": "manual_admin_close",
+    }.get(result, "manual_admin_close")

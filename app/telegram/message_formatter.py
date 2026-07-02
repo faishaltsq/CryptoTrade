@@ -298,12 +298,12 @@ Belum ada signal valid yang tersimpan.
 Jalankan <code>/scan_now</code> untuk scan manual."""
     items, page, total_pages = paginate_items(signals, page, per_page)
     cards = "\n\n".join(format_signal_log_card(x) for x in items)
-    return f"""<b>📈 Recent Valid Signals</b>
+    return f"""<b>📈 Recent Signals</b>
 
 {SEP}
 <b>Total:</b> {len(signals)}
 <b>Page:</b> {page}/{total_pages}
-<b>Filter:</b> Valid signal only
+<b>Filter:</b> BUY/SELL signals
 
 {SEP}
 {cards}"""
@@ -695,6 +695,108 @@ def format_signal_log_card(row: Any) -> str:
 <b>Status:</b> {h(outcome)}
 <b>Est. Valid:</b> {h(validity)}
 <b>Time:</b> {time_wib(getattr(row, 'timestamp', None))}"""
+
+
+def format_signal_detail_message(row: Any, outcome: Any | None = None) -> str:
+    methods = parse_json(getattr(row, "analysis_method_json", "[]"), []) or []
+    orderflow = parse_json(getattr(row, "orderflow_summary_json", "{}"), {}) or {}
+    return f"""<b>📌 Signal Detail #{h(getattr(row, 'id', ''))}</b>
+
+{SEP}
+<b>Symbol:</b> {h(getattr(row, 'symbol', ''))}
+<b>Decision:</b> {h(getattr(row, 'decision', ''))}
+<b>Provider:</b> {h(getattr(row, 'provider', '') or '-')}
+<b>Market:</b> {h(getattr(row, 'market_type', '') or 'USDT Perpetual')}
+<b>Confidence:</b> {h(getattr(row, 'confidence', 0))}%
+<b>RR:</b> 1:{h(getattr(row, 'risk_reward', 0))}
+
+{SEP}
+<b>Trade Plan</b>
+Entry: <code>{h(getattr(row, 'entry_zone', ''))}</code>
+SL: <code>{h(getattr(row, 'stop_loss', ''))}</code>
+TP1: <code>{h(getattr(row, 'take_profit_1', ''))}</code>
+TP2: <code>{h(getattr(row, 'take_profit_2', ''))}</code>
+
+{SEP}
+<b>Market Context</b>
+Regime: {h(getattr(row, 'market_regime', '') or '-')}
+Methods: {h(', '.join(str(x) for x in methods) or '-')}
+
+{SEP}
+<b>Orderflow</b>
+Bias: {h(orderflow.get('orderflow_bias', orderflow.get('bias', '-')))}
+Delta: {h(orderflow.get('volume_delta', '-'))}
+CVD: {h(orderflow.get('cumulative_volume_delta', '-'))}
+Spread: {h(orderflow.get('spread', '-'))}
+Conflict: {h(orderflow.get('orderflow_conflict', orderflow.get('conflict', False)))}
+
+{SEP}
+<b>Reason</b>
+{h(getattr(row, 'reason', ''))}
+
+{SEP}
+<b>Invalid If</b>
+{h(getattr(row, 'invalid_if', ''))}
+
+{SEP}
+<b>Status</b>
+Broadcast: {h(getattr(row, 'broadcast_status', ''))}
+Outcome: {h(getattr(row, 'outcome_status', ''))}
+Review: {h(getattr(row, 'review_status', ''))}
+Close Reason: {h(getattr(outcome, 'close_reason', '') if outcome else '-')}"""
+
+
+def format_pending_signals_message(rows: list[Any]) -> str:
+    if not rows:
+        return "<b>⏳ Pending Signals</b>\n\nTidak ada signal pending."
+    cards = []
+    for row in rows[:20]:
+        cards.append(f"#{h(getattr(row, 'id', ''))} <b>{h(getattr(row, 'symbol', ''))}</b> {h(getattr(row, 'decision', ''))}\nEntry: <code>{h(getattr(row, 'entry_zone', ''))}</code>\nSL: <code>{h(getattr(row, 'stop_loss', ''))}</code>\nTP1: <code>{h(getattr(row, 'take_profit_1', ''))}</code>\nAge: {h(age_text(getattr(row, 'timestamp', None)))}")
+    return f"""<b>⏳ Pending Signals</b>
+
+{SEP}
+<b>Total:</b> {len(rows)}
+
+{SEP}
+{chr(10).join(cards)}"""
+
+
+def format_outcomes_message(rows: list[Any]) -> str:
+    closed = [x for x in rows if getattr(x, "result", "pending") != "pending"]
+    counts = Counter(getattr(x, "result", "") for x in closed)
+    latest = "\n".join(f"#{h(getattr(x, 'signal_id', ''))} {h(getattr(x, 'symbol', ''))} {h(getattr(x, 'decision', ''))} — {h(getattr(x, 'result', ''))}" for x in closed[:10]) or "Belum ada closed outcome."
+    return f"""<b>📊 Recent Outcomes</b>
+
+{SEP}
+<b>Total Closed:</b> {len(closed)}
+
+TP1: {counts.get('hit_tp1', 0)}
+TP2: {counts.get('hit_tp2', 0)}
+SL: {counts.get('hit_sl', 0)}
+Expired: {counts.get('expired', 0)}
+
+{SEP}
+<b>Latest</b>
+{latest}"""
+
+
+def format_signal_result_updated_message(row: Any, outcome: Any) -> str:
+    return f"""<b>✅ Signal Result Updated</b>
+
+{SEP}
+Signal: <code>#{h(getattr(row, 'id', ''))}</code>
+Pair: <b>{h(getattr(row, 'symbol', ''))}</b>
+Outcome: <b>{h(getattr(outcome, 'result', ''))}</b>
+Close Reason: {h(getattr(outcome, 'close_reason', '') or '-')}"""
+
+
+def age_text(value: Any) -> str:
+    if not isinstance(value, datetime):
+        return "-"
+    dt = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    minutes = max(0, int((datetime.now(timezone.utc) - dt).total_seconds() // 60))
+    hours, mins = divmod(minutes, 60)
+    return f"{hours}h {mins}m" if hours else f"{mins}m"
 
 
 def signal_outcome(row: Any) -> str:

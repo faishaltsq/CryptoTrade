@@ -173,6 +173,47 @@ Core rules:
 
 Auto-broadcast is enabled on launch by default. Use `/broadcast_off` to pause channel broadcasting at runtime.
 
+## Signal Logging And Outcome Tracking
+
+CryptoTrade stores every BUY/SELL signal in `signal_logs` with a unique ID, original AI response, trade plan, market context, orderflow summary, derivatives summary, broadcast status, outcome status, and review status.
+
+For every new signal, the bot also creates a `signal_outcomes` row with `pending` result. This is the foundation for a future learning loop, but it is not model fine-tuning and it does not give DeepSeek permanent memory.
+
+Outcome tracking is signal-only. It does not open positions, place orders, cancel orders, or use private trading APIs. It only checks public market prices against TP/SL/expiry rules.
+
+Tracked outcomes:
+
+- `pending`
+- `hit_tp1`
+- `hit_tp2`
+- `hit_sl`
+- `break_even`
+- `expired`
+- `invalidated`
+- `manually_closed`
+
+Default expiry:
+
+- M15/scalp: `SIGNAL_EXPIRY_M15_HOURS=6`
+- H1/intraday/default: `SIGNAL_EXPIRY_H1_HOURS=24`
+- H4/swing: `SIGNAL_EXPIRY_H4_HOURS=72`
+
+Outcome tracking can be disabled with:
+
+```env
+ENABLE_OUTCOME_TRACKING=false
+```
+
+Telegram commands:
+
+- `/signals` shows recent BUY/SELL signals.
+- `/signal_detail ID` shows full signal context and status.
+- `/signal_result ID RESULT` manually updates a signal outcome.
+- `/pending_signals` shows signals still waiting for TP/SL/expiry.
+- `/outcomes` shows recent closed outcome summary.
+
+Allowed manual results: `hit_tp1`, `hit_tp2`, `hit_sl`, `break_even`, `expired`, `invalidated`, `manually_closed`.
+
 Aggressive trade interpretation:
 
 - Aggressive buy volume means buyer taker pressure, not guaranteed new long positions.

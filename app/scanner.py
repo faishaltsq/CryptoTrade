@@ -62,6 +62,7 @@ class MarketScanner:
                         rejected_reasons.append(reason)
                         save_rejected_setup(db, symbol, reason, {**tf_summary, "orderflow": orderflow_summary})
                         continue
+                    candidate["provider"] = provider.name
                     candidates += 1
                     if self.settings.enable_orderflow:
                         orderflow_aggregator.start_depth(provider.name, symbol)

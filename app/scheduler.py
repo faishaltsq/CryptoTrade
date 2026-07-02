@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from app.utils.time import iso_utc
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.config import get_settings
+from app.database.session import SessionLocal
+from app.learning.outcome_tracker import track_pending_outcomes
 from app.orderflow.orderflow_aggregator import orderflow_aggregator
 from app.scanner import scanner
 
@@ -38,9 +40,24 @@ async def run_scan_now() -> dict:
 
 async def scan_job() -> None:
     try:
+        await run_outcome_tracker()
         await run_scan_now()
+        await run_outcome_tracker()
     except Exception:  # noqa: BLE001
         logger.exception("Scheduled scan failed")
+
+
+async def run_outcome_tracker() -> dict:
+    db = SessionLocal()
+    try:
+        result = await track_pending_outcomes(db)
+        logger.info("Outcome tracking completed: %s", result)
+        return result
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Outcome tracking failed")
+        return {"status": "failed", "error": str(exc)}
+    finally:
+        db.close()
 
 
 def start_scheduler() -> None:
