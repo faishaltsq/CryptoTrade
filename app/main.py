@@ -1,0 +1,149 @@
+import asyncio
+import json
+from fastapi import Depends, FastAPI, Request
+from sqlalchemy.orm import Session
+from app.config import get_settings
+from app.database import repository
+from app.database.session import get_db, init_db
+from app.market_data.binance_diagnostic import format_diagnostic, run_binance_diagnostic
+from app.scheduler import run_scan_now, scan_job, scan_state, start_scheduler, stop_scheduler
+from app.telegram.admin_bot import TelegramBot
+from app.telegram.callbacks import handle_callback
+from app.telegram.commands import command_from_callback, command_keyboard, handle_command, is_admin
+from app.telegram.webhook_manager import setup_public_webhook, stop_ngrok
+from app.utils.logger import setup_logging
+
+
+setup_logging()
+app = FastAPI(title="Crypto AI Signal Bot", version="0.1.0")
+
+
+@app.on_event("startup")
+async def startup() -> None:
+    init_db()
+    start_scheduler()
+    await setup_public_webhook()
+
+
+@app.on_event("shutdown")
+async def shutdown() -> None:
+    stop_scheduler()
+    stop_ngrok()
+
+
+@app.get("/health")
+async def health() -> dict:
+    return {"status": "ok"}
+
+
+@app.post("/scan")
+async def manual_scan() -> dict:
+    asyncio.create_task(scan_job())
+    return {"status": "queued"}
+
+
+@app.post("/scan/run")
+async def manual_scan_run() -> dict:
+    return await run_scan_now()
+
+
+@app.get("/scan/state")
+async def api_scan_state() -> dict:
+    return scan_state
+
+
+@app.get("/status")
+async def api_status(db: Session = Depends(get_db)) -> dict:
+    settings = get_settings()
+    scan = repository.latest_scan(db)
+    return {
+        "bot": "active",
+        "max_pairs": settings.max_pairs,
+        "auto_broadcast": settings.auto_broadcast,
+        "min_confidence": settings.min_confidence,
+        "min_risk_reward": settings.min_risk_reward,
+        "auto_ngrok": settings.auto_ngrok,
+        "public_base_url": settings.public_base_url,
+        "last_scan": row_to_dict(scan) if scan else None,
+    }
+
+
+@app.get("/last_scan")
+async def api_last_scan(db: Session = Depends(get_db)) -> dict:
+    scan = repository.latest_scan(db)
+    return row_to_dict(scan) if scan else {"message": "No scan yet."}
+
+
+@app.get("/signals")
+async def api_signals(limit: int = 10, db: Session = Depends(get_db)) -> list[dict]:
+    return [row_to_dict(row) for row in repository.latest_signals(db, limit)]
+
+
+@app.get("/rejected")
+async def api_rejected(limit: int = 20, db: Session = Depends(get_db)) -> list[dict]:
+    return [row_to_dict(row) for row in repository.latest_rejected(db, limit)]
+
+
+@app.get("/orderflow/{symbol}")
+async def api_orderflow(symbol: str, limit: int = 10, db: Session = Depends(get_db)) -> list[dict]:
+    return [row_to_dict(row) for row in repository.latest_orderflow(db, symbol, limit)]
+
+
+@app.post("/telegram/webhook")
+async def telegram_webhook(request: Request, db: Session = Depends(get_db)) -> dict:
+    try:
+        update = await request.json()
+    except json.JSONDecodeError:
+        return {"ok": False, "error": "telegram webhook expects Telegram JSON update; use /scan for manual scan"}
+    if not isinstance(update, dict) or not update:
+        return {"ok": False, "error": "empty webhook body"}
+    bot = TelegramBot()
+    if "message" in update:
+        message = update["message"]
+        chat_id = str(message.get("chat", {}).get("id", ""))
+        text = message.get("text", "")
+        if not is_admin(chat_id):
+            await bot.send_message(chat_id, "Unauthorized.")
+            return {"ok": True}
+        reply, action = handle_command(db, text)
+        await bot.send_admin(reply, command_keyboard())
+        if action == "scan_now":
+            asyncio.create_task(scan_job())
+        if action == "diagnose_binance":
+            rows = await run_binance_diagnostic()
+            await bot.send_admin(format_diagnostic(rows)[:4000], command_keyboard())
+        return {"ok": True}
+    if "callback_query" in update:
+        callback = update["callback_query"]
+        chat_id = str(callback.get("message", {}).get("chat", {}).get("id", ""))
+        if not is_admin(chat_id):
+            await bot.send_message(chat_id, "Unauthorized.")
+            return {"ok": True}
+        callback_data = callback.get("data", "")
+        command = command_from_callback(callback_data)
+        if command:
+            reply, action = handle_command(db, command)
+            await bot.send_admin(reply, command_keyboard())
+            if action == "scan_now":
+                asyncio.create_task(scan_job())
+            if action == "diagnose_binance":
+                rows = await run_binance_diagnostic()
+                await bot.send_admin(format_diagnostic(rows)[:4000], command_keyboard())
+            return {"ok": True}
+        reply = await handle_callback(db, callback_data, bot)
+        await bot.send_admin(reply, command_keyboard())
+        return {"ok": True}
+    return {"ok": True}
+
+
+def row_to_dict(row) -> dict:
+    data = {column.name: getattr(row, column.name) for column in row.__table__.columns}
+    for key, value in list(data.items()):
+        if key.endswith("_json") and isinstance(value, str):
+            try:
+                data[key] = json.loads(value)
+            except json.JSONDecodeError:
+                pass
+        elif hasattr(value, "isoformat"):
+            data[key] = value.isoformat()
+    return data

@@ -1,0 +1,159 @@
+import logging
+from typing import Any
+import pandas as pd
+from app.ai.deepseek_client import DeepSeekClient
+from app.analysis.setup_detector import detect_setup
+from app.config import get_settings
+from app.database.repository import save_orderflow_snapshot, save_rejected_setup, save_scan_log, save_signal_log, update_signal_status
+from app.database.session import SessionLocal
+from app.market_data.base_provider import MarketDataProvider, ProviderError, empty_optional_market_data
+from app.market_data.provider_factory import configured_provider_names, create_provider
+from app.orderflow.orderflow_aggregator import orderflow_aggregator
+from app.signal.broadcaster import SignalBroadcaster
+from app.signal.validator import validate_for_broadcast
+
+
+logger = logging.getLogger(__name__)
+
+
+class MarketScanner:
+    def __init__(self) -> None:
+        self.settings = get_settings()
+        self.ai = DeepSeekClient()
+        self.broadcaster = SignalBroadcaster()
+
+    async def scan(self) -> dict[str, Any]:
+        db = SessionLocal()
+        rejected_reasons: list[str] = []
+        candidates = 0
+        valid_signals = 0
+        pairs: list[dict[str, Any]] = []
+        provider: MarketDataProvider | None = None
+        provider_errors: list[dict[str, Any]] = []
+        try:
+            provider, pairs, provider_errors = await self.load_pairs_from_providers()
+            if not provider:
+                summary = {"status": "skipped", "reason": "market_data_unavailable", "provider_errors": provider_errors}
+                save_scan_log(db, 0, 0, 0, 0, summary)
+                await self.broadcaster.bot.send_admin("Market data provider tidak bisa diakses. Scan dilewati.\n" + format_provider_errors(provider_errors))
+                return {"status": "skipped", "summary": summary}
+            if self.settings.enable_orderflow:
+                orderflow_aggregator.start(provider.name, [p["symbol"] for p in pairs[: self.settings.max_realtime_pairs]])
+            for pair in pairs:
+                symbol = pair["symbol"]
+                try:
+                    orderflow_summaries = orderflow_aggregator.summaries(symbol)
+                    for snapshot in orderflow_summaries.values():
+                        save_orderflow_snapshot(db, snapshot)
+                    orderflow_summary = orderflow_summaries["1m"]
+                    candles = await self.get_multi_timeframe(provider, symbol)
+                    futures_data = await self.get_futures_data(provider, symbol)
+                    candidate, reason, tf_summary = detect_setup(symbol, candles, futures_data, pair.get("volume_rank", 0), pair.get("spread_pct", 0), orderflow_summary)
+                    if not candidate:
+                        rejected_reasons.append(reason)
+                        save_rejected_setup(db, symbol, reason, {**tf_summary, "orderflow": orderflow_summary})
+                        continue
+                    candidates += 1
+                    if self.settings.enable_orderflow:
+                        orderflow_aggregator.start_depth(provider.name, symbol)
+                    ai_response, ai_error = await self.ai.analyze(candidate)
+                    ai_response["orderflow"] = candidate.get("orderflow", {})
+                    if ai_error:
+                        logger.warning("AI response issue symbol=%s error=%s", symbol, ai_error)
+                    ok, validation_reason = validate_for_broadcast(ai_response)
+                    row = save_signal_log(db, candidate, ai_response, status="pending" if ok else "rejected")
+                    if ok:
+                        valid_signals += 1
+                        await self.broadcaster.send_candidate_to_admin(row.id, ai_response)
+                        if self.settings.auto_broadcast:
+                            await self.broadcaster.broadcast_channel(ai_response)
+                            update_signal_status(db, row.id, "broadcasted", "broadcasted")
+                    else:
+                        rejected_reasons.append(validation_reason)
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception("Scan failed for symbol=%s", symbol)
+                    rejected_reasons.append("scanner error")
+                    save_rejected_setup(db, symbol, "scanner error", {"error": str(exc)})
+            summary = {
+                "pairs": [p["symbol"] for p in pairs],
+                "top_volume": [{"symbol": p["symbol"], "quote_volume": p["quote_volume"], "rank": p["volume_rank"]} for p in pairs[:20]],
+                "rejected_reasons": rejected_reasons,
+                "provider": provider.name,
+            }
+            save_scan_log(db, len(pairs), candidates, valid_signals, len(rejected_reasons), summary)
+            if valid_signals == 0:
+                await self.broadcaster.send_no_valid_setup(len(pairs), rejected_reasons, self.settings.scan_interval_minutes)
+            return {"total_pairs": len(pairs), "candidates": candidates, "valid_signals": valid_signals, "rejected": len(rejected_reasons), "summary": summary}
+        finally:
+            db.close()
+            if provider:
+                await provider.close()
+
+    async def load_pairs_from_providers(self) -> tuple[MarketDataProvider | None, list[dict[str, Any]], list[dict[str, Any]]]:
+        errors = []
+        for name in configured_provider_names():
+            provider = create_provider(name)
+            try:
+                symbols = await provider.get_symbols()
+                tickers = await provider.get_tickers()
+                pairs = merge_top_pairs(symbols, tickers, self.settings.max_pairs)
+                if pairs:
+                    return provider, pairs, errors
+                errors.append({"provider": name, "message": "no_pairs_after_filter"})
+                await provider.close()
+            except ProviderError as exc:
+                errors.append(exc.to_dict())
+                await provider.close()
+            except Exception as exc:  # noqa: BLE001
+                errors.append({"provider": name, "message": str(exc)})
+                await provider.close()
+        return None, [], errors
+
+    async def get_multi_timeframe(self, provider: MarketDataProvider, symbol: str) -> dict[str, pd.DataFrame]:
+        timeframes = {"M15": "15m", "H1": "1h", "H4": "4h", "D1": "1d"}
+        return {name: klines_to_dataframe(await provider.get_klines(symbol, interval, limit=250)) for name, interval in timeframes.items()}
+
+    async def get_futures_data(self, provider: MarketDataProvider, symbol: str) -> dict[str, Any]:
+        data = empty_optional_market_data()
+        try:
+            data.update(await provider.get_funding_rate(symbol))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Funding data failed provider=%s symbol=%s error=%s", provider.name, symbol, exc)
+        try:
+            data.update(await provider.get_open_interest(symbol))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Open interest failed provider=%s symbol=%s error=%s", provider.name, symbol, exc)
+        return data
+
+
+def merge_top_pairs(symbols: list[dict[str, Any]], tickers: list[dict[str, Any]], max_pairs: int) -> list[dict[str, Any]]:
+    active = {x["symbol"]: x for x in symbols if x.get("status") == "TRADING" and x.get("quote") == "USDT"}
+    rows = []
+    for ticker in tickers:
+        symbol = ticker.get("symbol")
+        if symbol not in active:
+            continue
+        rows.append({**active[symbol], **ticker})
+    rows.sort(key=lambda x: float(x.get("quote_volume") or 0), reverse=True)
+    for idx, row in enumerate(rows, start=1):
+        row["volume_rank"] = idx
+    return rows[:max_pairs]
+
+
+def klines_to_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
+    df = pd.DataFrame(rows)
+    for col in ["open", "high", "low", "close", "volume", "quote_volume"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df["open_time"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
+    df["close_time"] = df["open_time"]
+    return df
+
+
+def format_provider_errors(errors: list[dict[str, Any]]) -> str:
+    lines = []
+    for item in errors[:5]:
+        lines.append(f"{item.get('provider')}: {item.get('message')} status={item.get('status_code', '')}")
+    return "\n".join(lines) or "No provider error details."
+
+
+scanner = MarketScanner()

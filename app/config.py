@@ -1,0 +1,53 @@
+from functools import lru_cache
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    deepseek_api_key: str = Field(default="", alias="DEEPSEEK_API_KEY")
+    telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
+    telegram_admin_chat_id: str = Field(default="", alias="TELEGRAM_ADMIN_CHAT_ID")
+    telegram_channel_chat_id: str = Field(default="", alias="TELEGRAM_CHANNEL_CHAT_ID")
+    binance_base_url: str = Field(default="https://api.binance.com", alias="BINANCE_BASE_URL")
+    binance_futures_base_url: str = Field(default="https://fapi.binance.com", alias="BINANCE_FUTURES_BASE_URL")
+    binance_futures_ws_url: str = Field(default="wss://fstream.binance.com/ws", alias="BINANCE_FUTURES_WS_URL")
+    binance_spot_data_base_url: str = Field(default="https://data-api.binance.vision", alias="BINANCE_SPOT_DATA_BASE_URL")
+    binance_spot_data_ws_url: str = Field(default="wss://data-stream.binance.vision:443/ws", alias="BINANCE_SPOT_DATA_WS_URL")
+    binance_futures_fallback_urls: str = Field(default="", alias="BINANCE_FUTURES_FALLBACK_URLS")
+    auto_broadcast: bool = Field(default=False, alias="AUTO_BROADCAST")
+    min_confidence: int = Field(default=65, alias="MIN_CONFIDENCE")
+    min_risk_reward: float = Field(default=2.0, alias="MIN_RISK_REWARD")
+    max_pairs: int = Field(default=80, alias="MAX_PAIRS")
+    scan_interval_minutes: int = Field(default=15, alias="SCAN_INTERVAL_MINUTES")
+    database_url: str = Field(default="sqlite:///crypto_signal_bot.db", alias="DATABASE_URL")
+    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+    request_timeout_seconds: float = Field(default=15.0, alias="REQUEST_TIMEOUT_SECONDS")
+    request_delay_seconds: float = Field(default=0.15, alias="REQUEST_DELAY_SECONDS")
+    app_port: int = Field(default=8000, alias="APP_PORT")
+    auto_ngrok: bool = Field(default=False, alias="AUTO_NGROK")
+    ngrok_authtoken: str = Field(default="", alias="NGROK_AUTHTOKEN")
+    public_base_url: str = Field(default="", alias="PUBLIC_BASE_URL")
+    market_provider: str = Field(default="bybit", alias="MARKET_PROVIDER")
+    fallback_market_provider: str = Field(default="okx", alias="FALLBACK_MARKET_PROVIDER")
+    altcoin_provider: str = Field(default="gate", alias="ALTCOIN_PROVIDER")
+    enable_orderflow: bool = Field(default=True, alias="ENABLE_ORDERFLOW")
+    enable_liquidation_stream: bool = Field(default=True, alias="ENABLE_LIQUIDATION_STREAM")
+    max_realtime_pairs: int = Field(default=30, alias="MAX_REALTIME_PAIRS")
+    max_depth_pairs: int = Field(default=10, alias="MAX_DEPTH_PAIRS")
+    orderflow_windows: str = Field(default="10s,1m,5m", alias="ORDERFLOW_WINDOWS")
+    bybit_rest_base_url: str = Field(default="https://api.bybit.com", alias="BYBIT_REST_BASE_URL")
+    bybit_ws_linear_url: str = Field(default="wss://stream.bybit.com/v5/public/linear", alias="BYBIT_WS_LINEAR_URL")
+    okx_rest_base_url: str = Field(default="https://www.okx.com", alias="OKX_REST_BASE_URL")
+    okx_ws_public_url: str = Field(default="wss://ws.okx.com:8443/ws/v5/public", alias="OKX_WS_PUBLIC_URL")
+    gate_rest_base_url: str = Field(default="https://api.gateio.ws/api/v4", alias="GATE_REST_BASE_URL")
+    gate_futures_ws_url: str = Field(default="wss://fx-ws.gateio.ws/v4/ws/usdt", alias="GATE_FUTURES_WS_URL")
+    mexc_rest_base_url: str = Field(default="https://contract.mexc.com", alias="MEXC_REST_BASE_URL")
+    mexc_spot_ws_url: str = Field(default="wss://wbs-api.mexc.com/ws", alias="MEXC_SPOT_WS_URL")
+    kucoin_rest_base_url: str = Field(default="https://api-futures.kucoin.com", alias="KUCOIN_REST_BASE_URL")
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
