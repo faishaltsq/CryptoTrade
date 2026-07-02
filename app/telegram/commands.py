@@ -17,7 +17,7 @@ HELP_TEXT = """Commands:
 /broadcast_on
 /broadcast_off
 /last_scan
-/diagnose_binance
+/diagnose_market
 /help"""
 
 
@@ -32,7 +32,7 @@ COMMAND_CALLBACKS = {
     "broadcast_on": "/broadcast_on",
     "broadcast_off": "/broadcast_off",
     "last_scan": "/last_scan",
-    "diagnose_binance": "/diagnose_binance",
+    "diagnose_market": "/diagnose_market",
     "help": "/help",
 }
 
@@ -45,7 +45,7 @@ def command_keyboard() -> dict:
             [{"text": "Signals", "callback_data": "cmd:signals"}, {"text": "Waiting", "callback_data": "cmd:waiting"}],
             [{"text": "Settings", "callback_data": "cmd:settings"}, {"text": "Last Scan", "callback_data": "cmd:last_scan"}],
             [{"text": "Broadcast ON", "callback_data": "cmd:broadcast_on"}, {"text": "Broadcast OFF", "callback_data": "cmd:broadcast_off"}],
-            [{"text": "Diagnose Binance", "callback_data": "cmd:diagnose_binance"}, {"text": "Help", "callback_data": "cmd:help"}],
+            [{"text": "Diagnose Market", "callback_data": "cmd:diagnose_market"}, {"text": "Help", "callback_data": "cmd:help"}],
         ]
     }
 
@@ -100,6 +100,6 @@ def handle_command(db: Session, text: str) -> tuple[str, str | None]:
     if cmd == "/last_scan":
         scan = repository.latest_scan(db)
         return scan.summary_json if scan else "No scan yet.", None
-    if cmd == "/diagnose_binance":
-        return "Running Binance diagnostic...", "diagnose_binance"
+    if cmd in {"/diagnose_market", "/diagnose_binance"}:
+        return "Running market provider diagnostic...", "diagnose_market"
     return "Unknown command. Use /help", None

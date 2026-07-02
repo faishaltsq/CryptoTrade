@@ -238,7 +238,7 @@ Admin-only commands:
 - `/broadcast_on`
 - `/broadcast_off`
 - `/last_scan`
-- `/diagnose_binance`
+- `/diagnose_market`
 - `/help`
 
 The bot also sends an inline keyboard menu for the main commands.
@@ -274,6 +274,16 @@ Tables:
 
 `signal_logs` stores `orderflow_summary_json`, `binance_endpoint_status`, and `market_data_error` for audit/debugging.
 
+## Market Diagnostics
+
+Telegram command:
+
+```text
+/diagnose_market
+```
+
+This checks configured providers from `MARKET_PROVIDER`, `FALLBACK_MARKET_PROVIDER`, and `ALTCOIN_PROVIDER`, then reports symbol/ticker availability and provider errors.
+
 ## Binance Diagnostic
 
 Binance is not required for the default scanner, but a diagnostic tool is available:
@@ -282,11 +292,13 @@ Binance is not required for the default scanner, but a diagnostic tool is availa
 python -m app.market_data.binance_diagnostic
 ```
 
-Telegram command:
+Legacy Telegram command:
 
 ```text
 /diagnose_binance
 ```
+
+Use `/diagnose_market` for general provider checks.
 
 Diagnostic uses `follow_redirects=False` and reports endpoint, status code, `Location`, content type, and a 300-character body preview.
 

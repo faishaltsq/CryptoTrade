@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.database import repository
 from app.database.session import get_db, init_db
-from app.market_data.binance_diagnostic import format_diagnostic, run_binance_diagnostic
+from app.market_data.provider_diagnostic import format_market_diagnostic, run_market_diagnostic
 from app.scheduler import run_scan_now, scan_job, scan_state, start_scheduler, stop_scheduler
 from app.telegram.admin_bot import TelegramBot
 from app.telegram.callbacks import handle_callback
@@ -109,9 +109,9 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)) -> d
         await bot.send_admin(reply, command_keyboard())
         if action == "scan_now":
             asyncio.create_task(scan_job())
-        if action == "diagnose_binance":
-            rows = await run_binance_diagnostic()
-            await bot.send_admin(format_diagnostic(rows)[:4000], command_keyboard())
+        if action == "diagnose_market":
+            rows = await run_market_diagnostic()
+            await bot.send_admin(format_market_diagnostic(rows)[:4000], command_keyboard())
         return {"ok": True}
     if "callback_query" in update:
         callback = update["callback_query"]
@@ -126,9 +126,9 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)) -> d
             await bot.send_admin(reply, command_keyboard())
             if action == "scan_now":
                 asyncio.create_task(scan_job())
-            if action == "diagnose_binance":
-                rows = await run_binance_diagnostic()
-                await bot.send_admin(format_diagnostic(rows)[:4000], command_keyboard())
+            if action == "diagnose_market":
+                rows = await run_market_diagnostic()
+                await bot.send_admin(format_market_diagnostic(rows)[:4000], command_keyboard())
             return {"ok": True}
         reply = await handle_callback(db, callback_data, bot)
         await bot.send_admin(reply, command_keyboard())
