@@ -1,6 +1,6 @@
 import json
 from typing import Any
-from sqlalchemy import desc
+from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 from app.database.models import OrderflowSnapshot, RejectedSetup, ScanLog, Setting, SignalLog
 
@@ -124,7 +124,8 @@ def latest_scan(db: Session) -> ScanLog | None:
 
 
 def latest_signals(db: Session, limit: int = 10) -> list[SignalLog]:
-    return db.query(SignalLog).filter(SignalLog.decision.in_(["BUY", "SELL"])).order_by(desc(SignalLog.timestamp)).limit(limit).all()
+    sub = db.query(SignalLog.symbol, func.max(SignalLog.timestamp).label("max_ts")).filter(SignalLog.decision.in_(["BUY", "SELL"])).group_by(SignalLog.symbol).subquery()
+    return db.query(SignalLog).join(sub, (SignalLog.symbol == sub.c.symbol) & (SignalLog.timestamp == sub.c.max_ts)).order_by(desc(SignalLog.timestamp)).limit(limit).all()
 
 
 def waiting_signals(db: Session, limit: int = 10) -> list[SignalLog]:
