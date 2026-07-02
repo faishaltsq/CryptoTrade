@@ -1,4 +1,5 @@
 import logging
+from time import time
 from typing import Any
 import pandas as pd
 from app.ai.deepseek_client import DeepSeekClient
@@ -46,6 +47,10 @@ class MarketScanner:
                     candles = await self.get_multi_timeframe(provider, symbol)
                     futures_data = await self.get_futures_data(provider, symbol)
                     orderflow_summaries = orderflow_aggregator.summaries(symbol)
+                    if orderflow_summaries["1m"].get("trade_count", 0) == 0:
+                        rest_orderflow = await self.get_rest_orderflow(provider, symbol)
+                        if rest_orderflow.get("trade_count", 0) > 0:
+                            orderflow_summaries = {window: {**rest_orderflow, "window": window} for window in ["10s", "1m", "5m"]}
                     for snapshot in orderflow_summaries.values():
                         snapshot.update({"open_interest": futures_data.get("open_interest", 0), "open_interest_change": futures_data.get("open_interest_change", 0)})
                         enriched = enrich_orderflow(snapshot)
@@ -134,6 +139,15 @@ class MarketScanner:
             logger.warning("Open interest failed provider=%s symbol=%s error=%s", provider.name, symbol, exc)
         return data
 
+    async def get_rest_orderflow(self, provider: MarketDataProvider, symbol: str) -> dict[str, Any]:
+        try:
+            trades = await provider.get_recent_trades(symbol, limit=100)
+            orderbook = await provider.get_orderbook(symbol, limit=50)
+            return build_rest_orderflow_summary(symbol, trades, orderbook)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("REST orderflow failed provider=%s symbol=%s error=%s", provider.name, symbol, exc)
+            return {}
+
 
 def merge_top_pairs(symbols: list[dict[str, Any]], tickers: list[dict[str, Any]], max_pairs: int) -> list[dict[str, Any]]:
     active = {x["symbol"]: x for x in symbols if x.get("status") == "TRADING" and x.get("quote") == "USDT"}
@@ -156,6 +170,122 @@ def klines_to_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
     df["open_time"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
     df["close_time"] = df["open_time"]
     return df
+
+
+def build_rest_orderflow_summary(symbol: str, trades: list[dict[str, Any]], orderbook: dict[str, Any]) -> dict[str, Any]:
+    cutoff_ms = int((time() - 60) * 1000)
+    buy_volume = 0.0
+    sell_volume = 0.0
+    total_qty = 0.0
+    trade_count = 0
+    for trade in trades:
+        ts = trade_timestamp_ms(trade)
+        if ts and ts < cutoff_ms:
+            continue
+        qty = trade_qty(trade)
+        if qty <= 0:
+            continue
+        side = trade_side(trade)
+        if side == "sell":
+            sell_volume += qty
+        else:
+            buy_volume += qty
+        total_qty += qty
+        trade_count += 1
+    bids = parse_levels(orderbook.get("bids", []))
+    asks = parse_levels(orderbook.get("asks", []))
+    bid_depth = sum(q for _, q in bids[:10])
+    ask_depth = sum(q for _, q in asks[:10])
+    best_bid = bids[0][0] if bids else 0.0
+    best_ask = asks[0][0] if asks else 0.0
+    wall_side, wall_price = liquidity_wall(bids[:10], asks[:10])
+    volume_delta = buy_volume - sell_volume
+    return enrich_orderflow({
+        "symbol": symbol.upper(),
+        "window": "1m",
+        "price": best_ask or best_bid,
+        "buy_volume": round(buy_volume, 6),
+        "sell_volume": round(sell_volume, 6),
+        "volume_delta": round(volume_delta, 6),
+        "cumulative_volume_delta": round(volume_delta, 6),
+        "delta_ratio": round(buy_volume / sell_volume, 4) if sell_volume else round(buy_volume, 4),
+        "trade_count": trade_count,
+        "trade_intensity": "medium" if trade_count >= 60 else "low",
+        "average_trade_size": round(total_qty / trade_count, 6) if trade_count else 0,
+        "large_trade_count": 0,
+        "best_bid": best_bid,
+        "best_ask": best_ask,
+        "spread": round(best_ask - best_bid, 8) if best_bid and best_ask else 0,
+        "bid_depth": round(bid_depth, 6),
+        "ask_depth": round(ask_depth, 6),
+        "bid_qty_top_levels": round(bid_depth, 6),
+        "ask_qty_top_levels": round(ask_depth, 6),
+        "orderbook_imbalance": round(bid_depth / ask_depth, 4) if ask_depth else round(bid_depth, 4),
+        "liquidity_wall_side": wall_side,
+        "liquidity_wall_price": wall_price,
+        "liquidity_pull_detected": False,
+        "liquidation_buy_notional": 0,
+        "liquidation_sell_notional": 0,
+        "liquidation_spike_detected": False,
+    })
+
+
+def trade_timestamp_ms(trade: dict[str, Any]) -> int:
+    value = trade.get("T") or trade.get("time") or trade.get("ts") or trade.get("create_time_ms") or trade.get("create_time") or 0
+    try:
+        ts = float(value)
+    except (TypeError, ValueError):
+        return 0
+    return int(ts * 1000) if ts < 10_000_000_000 else int(ts)
+
+
+def trade_qty(trade: dict[str, Any]) -> float:
+    for key in ("q", "qty", "size", "sz", "vol", "v", "amount"):
+        try:
+            value = float(trade.get(key) or 0)
+        except (TypeError, ValueError):
+            value = 0
+        if value > 0:
+            return value
+    return 0.0
+
+
+def trade_side(trade: dict[str, Any]) -> str:
+    side = str(trade.get("side") or trade.get("S") or "").lower()
+    if side in {"sell", "s", "ask"}:
+        return "sell"
+    if side in {"buy", "b", "bid"}:
+        return "buy"
+    if "m" in trade:
+        return "sell" if bool(trade.get("m")) else "buy"
+    side_code = str(trade.get("type") or trade.get("trade_type") or "").lower()
+    if side_code in {"2", "sell"}:
+        return "sell"
+    return "buy"
+
+
+def parse_levels(levels: list[Any]) -> list[tuple[float, float]]:
+    parsed = []
+    for level in levels:
+        if isinstance(level, dict):
+            price = level.get("p") or level.get("price") or level.get("px")
+            qty = level.get("s") or level.get("size") or level.get("qty") or level.get("sz")
+        else:
+            price = level[0] if len(level) > 0 else 0
+            qty = level[1] if len(level) > 1 else 0
+        try:
+            parsed.append((float(price or 0), float(qty or 0)))
+        except (TypeError, ValueError):
+            continue
+    return parsed
+
+
+def liquidity_wall(bids: list[tuple[float, float]], asks: list[tuple[float, float]]) -> tuple[str, float]:
+    levels = [("bid", p, q) for p, q in bids] + [("ask", p, q) for p, q in asks]
+    if not levels:
+        return "none", 0.0
+    side, price, _ = max(levels, key=lambda x: x[2])
+    return side, float(price)
 
 
 def format_provider_errors(errors: list[dict[str, Any]]) -> str:
