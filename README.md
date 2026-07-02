@@ -243,6 +243,19 @@ Admin-only commands:
 
 The bot also sends an inline keyboard menu for the main commands.
 
+## Telegram Message Formatting
+
+- Semua command Telegram memakai `parse_mode="HTML"`.
+- Dynamic text di-escape sebelum dikirim.
+- Message panjang otomatis di-split dengan batas aman 3800 karakter.
+- List panjang otomatis memakai pagination.
+- Formatter terpusat di `app/telegram/message_formatter.py`.
+- `/pairs` menampilkan 20 item per halaman.
+- `/top_volume` menampilkan 15 item per halaman.
+- `/signals` menampilkan 10 item per halaman.
+- `/waiting` menampilkan 15 item per halaman.
+- Inline keyboard tersedia untuk Prev, Next, Refresh, menu command, dan action signal.
+
 ## API Endpoints
 
 - `GET /health`

@@ -5,11 +5,12 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.database import repository
 from app.database.session import get_db, init_db
-from app.market_data.provider_diagnostic import format_market_diagnostic, run_market_diagnostic
+from app.market_data.provider_diagnostic import run_market_diagnostic
 from app.scheduler import run_scan_now, scan_job, scan_state, start_scheduler, stop_scheduler
 from app.telegram.admin_bot import TelegramBot
 from app.telegram.callbacks import handle_callback
-from app.telegram.commands import command_from_callback, command_keyboard, handle_command, is_admin
+from app.telegram.commands import command_from_callback, command_keyboard, handle_command, is_admin, pagination_keyboard, signal_list_keyboard
+from app.telegram.message_formatter import format_access_denied_message, format_diagnose_provider_message, format_no_setup_message, format_scan_result_message
 from app.telegram.webhook_manager import setup_public_webhook, stop_ngrok
 from app.utils.logger import setup_logging
 
@@ -103,37 +104,57 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)) -> d
         chat_id = str(message.get("chat", {}).get("id", ""))
         text = message.get("text", "")
         if not is_admin(chat_id):
-            await bot.send_message(chat_id, "Unauthorized.")
+            await bot.send_message(chat_id, format_access_denied_message())
             return {"ok": True}
         reply, action = handle_command(db, text)
-        await bot.send_admin(reply, command_keyboard())
+        await bot.send_admin(reply, keyboard_for_action(action))
         if action == "scan_now":
-            asyncio.create_task(scan_job())
+            asyncio.create_task(run_scan_and_notify(bot))
         if action == "diagnose_market":
             rows = await run_market_diagnostic()
-            await bot.send_admin(format_market_diagnostic(rows)[:4000], command_keyboard())
+            await bot.send_admin(format_diagnose_provider_message(rows), command_keyboard())
         return {"ok": True}
     if "callback_query" in update:
         callback = update["callback_query"]
         chat_id = str(callback.get("message", {}).get("chat", {}).get("id", ""))
         if not is_admin(chat_id):
-            await bot.send_message(chat_id, "Unauthorized.")
+            await bot.send_message(chat_id, format_access_denied_message())
             return {"ok": True}
         callback_data = callback.get("data", "")
         command = command_from_callback(callback_data)
         if command:
             reply, action = handle_command(db, command)
-            await bot.send_admin(reply, command_keyboard())
+            await bot.send_admin(reply, keyboard_for_action(action))
             if action == "scan_now":
-                asyncio.create_task(scan_job())
+                asyncio.create_task(run_scan_and_notify(bot))
             if action == "diagnose_market":
                 rows = await run_market_diagnostic()
-                await bot.send_admin(format_market_diagnostic(rows)[:4000], command_keyboard())
+                await bot.send_admin(format_diagnose_provider_message(rows), command_keyboard())
             return {"ok": True}
         reply = await handle_callback(db, callback_data, bot)
         await bot.send_admin(reply, command_keyboard())
         return {"ok": True}
     return {"ok": True}
+
+
+async def run_scan_and_notify(bot: TelegramBot) -> None:
+    result = await run_scan_now()
+    scan_result = result.get("result", result)
+    message = format_scan_result_message(scan_result) if scan_result.get("valid_signals", 0) else format_no_setup_message(scan_result)
+    await bot.send_admin(message, command_keyboard())
+
+
+def keyboard_for_action(action: str | None) -> dict:
+    if not action:
+        return command_keyboard()
+    if action.startswith("keyboard:"):
+        parts = action.split(":")
+        kind, page, total = parts[1], int(parts[2]), int(parts[3])
+        if kind == "signals":
+            first_id = int(parts[4]) if len(parts) > 4 and parts[4].isdigit() else None
+            return signal_list_keyboard(page, total, first_id)
+        return pagination_keyboard(kind, page, total)
+    return command_keyboard()
 
 
 def row_to_dict(row) -> dict:

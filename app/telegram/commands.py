@@ -1,6 +1,23 @@
+import json
 from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.database import repository
+from app.telegram.message_formatter import (
+    format_broadcast_off_message,
+    format_broadcast_on_message,
+    format_error_message,
+    format_help_message,
+    format_last_scan_message,
+    format_pairs_message,
+    format_set_confidence_message,
+    format_set_rr_message,
+    format_settings_message,
+    format_signals_message,
+    format_start_message,
+    format_status_message,
+    format_top_volume_message,
+    format_waiting_message,
+)
 
 
 HELP_TEXT = """Commands:
@@ -50,7 +67,25 @@ def command_keyboard() -> dict:
     }
 
 
+def pagination_keyboard(kind: str, page: int, total_pages: int) -> dict:
+    prev_page = max(1, page - 1)
+    next_page = min(total_pages, page + 1)
+    return {"inline_keyboard": [[{"text": "Prev", "callback_data": f"{kind}_prev:{prev_page}"}, {"text": "Next", "callback_data": f"{kind}_next:{next_page}"}], [{"text": "Refresh", "callback_data": f"{kind}_refresh:{page}"}, {"text": "Menu", "callback_data": "cmd:help"}]]}
+
+
+def signal_list_keyboard(page: int, total_pages: int, first_signal_id: int | None = None) -> dict:
+    rows = [[{"text": "Prev", "callback_data": f"signals_prev:{max(1, page - 1)}"}, {"text": "Next", "callback_data": f"signals_next:{min(total_pages, page + 1)}"}]]
+    if first_signal_id:
+        rows.append([{"text": "Detail", "callback_data": f"signal_detail:{first_signal_id}"}, {"text": "Menu", "callback_data": "cmd:help"}])
+    return {"inline_keyboard": rows}
+
+
 def command_from_callback(data: str) -> str | None:
+    for prefix in ("pairs", "top_volume", "signals", "waiting"):
+        if data.startswith(f"{prefix}_"):
+            _, _, raw_page = data.partition(":")
+            page = raw_page if raw_page.isdigit() else "1"
+            return f"/{prefix} {page}"
     if not data.startswith("cmd:"):
         return None
     return COMMAND_CALLBACKS.get(data.split(":", 1)[1])
@@ -64,42 +99,69 @@ def handle_command(db: Session, text: str) -> tuple[str, str | None]:
     settings = get_settings()
     parts = text.strip().split()
     cmd = parts[0] if parts else "/help"
+    page = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 1
     if cmd in {"/start", "/help"}:
-        return HELP_TEXT, None
+        return (format_start_message(settings), None) if cmd == "/start" else (format_help_message(), None)
     if cmd == "/status":
         scan = repository.latest_scan(db)
         auto = repository.get_setting(db, "auto_broadcast", str(settings.auto_broadcast))
         min_conf = repository.get_setting(db, "min_confidence", str(settings.min_confidence))
         min_rr = repository.get_setting(db, "min_risk_reward", str(settings.min_risk_reward))
-        return f"Bot active\nPairs: {settings.max_pairs}\nAuto broadcast: {auto}\nMin confidence: {min_conf}\nMin RR: {min_rr}\nLast scan: {scan.timestamp if scan else 'never'}", None
+        summary = json.loads(scan.summary_json) if scan else {}
+        return format_status_message({"market_provider": settings.market_provider, "fallback_provider": settings.fallback_market_provider, "enable_orderflow": settings.enable_orderflow, "auto_broadcast": auto, "max_pairs": settings.max_pairs, "max_realtime_pairs": settings.max_realtime_pairs, "max_depth_pairs": settings.max_depth_pairs, "scan_interval_minutes": settings.scan_interval_minutes, "last_scan_time": scan.timestamp if scan else None, "min_confidence": min_conf, "min_risk_reward": min_rr, "total_scanned": getattr(scan, "total_pairs", 0) if scan else 0, "candidate_count": getattr(scan, "candidates_count", 0) if scan else 0, "valid_signal_count": getattr(scan, "valid_signals_count", 0) if scan else 0, "rejected_count": getattr(scan, "rejected_count", 0) if scan else 0, "provider": summary.get("provider")}), None
     if cmd == "/scan_now":
-        return "Manual scan queued.", "scan_now"
-    if cmd in {"/pairs", "/top_volume"}:
+        return "<b>🔎 Manual Scan Started</b>\n\nBot sedang scan market sekarang. Hasil akan dikirim setelah scan selesai.", "scan_now"
+    if cmd == "/pairs":
         scan = repository.latest_scan(db)
-        return scan.summary_json if scan else "No scan yet.", None
+        summary = json.loads(scan.summary_json) if scan else {}
+        provider = summary.get("provider", "-")
+        raw_pairs = summary.get("pairs", [])
+        top = {x.get("symbol"): x for x in summary.get("top_volume", []) if isinstance(x, dict)}
+        pairs = [{"symbol": x, "status": "TRADING", "volume_rank": top.get(x, {}).get("rank", idx + 1), "provider": provider} for idx, x in enumerate(raw_pairs)]
+        return format_pairs_message(pairs, page), f"keyboard:pairs:{page}:{max(1, (len(pairs) + 19) // 20)}"
+    if cmd == "/top_volume":
+        scan = repository.latest_scan(db)
+        summary = json.loads(scan.summary_json) if scan else {}
+        provider = summary.get("provider", "-")
+        pairs = [{**x, "provider": provider} for x in summary.get("top_volume", []) if isinstance(x, dict)]
+        return format_top_volume_message(pairs, page), f"keyboard:top_volume:{page}:{max(1, (len(pairs) + 14) // 15)}"
     if cmd == "/signals":
         rows = repository.latest_signals(db)
-        return "\n".join(f"#{r.id} {r.symbol} {r.decision} {r.confidence}% RR {r.risk_reward}" for r in rows) or "No signals.", None
+        return format_signals_message(rows, page), f"keyboard:signals:{page}:{max(1, (len(rows) + 9) // 10)}:{rows[0].id if rows else ''}"
     if cmd == "/waiting":
-        rows = repository.waiting_signals(db)
-        return "\n".join(f"#{r.id} {r.symbol} WAIT {r.reason[:80]}" for r in rows) or "No waiting setups.", None
+        rows = repository.latest_rejected(db, 200)
+        return format_waiting_message(rows, page), f"keyboard:waiting:{page}:{max(1, (len(rows) + 14) // 15)}"
     if cmd == "/settings":
-        return f"MIN_CONFIDENCE={repository.get_setting(db, 'min_confidence', str(settings.min_confidence))}\nMIN_RISK_REWARD={repository.get_setting(db, 'min_risk_reward', str(settings.min_risk_reward))}\nAUTO_BROADCAST={repository.get_setting(db, 'auto_broadcast', str(settings.auto_broadcast))}", None
+        return format_settings_message(settings.model_dump()), None
     if cmd == "/broadcast_on":
         repository.set_setting(db, "auto_broadcast", "true")
-        return "Auto broadcast on.", None
+        return format_broadcast_on_message({"min_confidence": settings.min_confidence, "min_risk_reward": settings.min_risk_reward, "channel_enabled": bool(settings.telegram_channel_chat_id)}), None
     if cmd == "/broadcast_off":
         repository.set_setting(db, "auto_broadcast", "false")
-        return "Auto broadcast off.", None
+        return format_broadcast_off_message({}), None
     if cmd == "/set_confidence" and len(parts) == 2:
+        try:
+            value = int(parts[1])
+            if not 1 <= value <= 100:
+                raise ValueError
+        except ValueError:
+            return format_error_message("Invalid Confidence Value", "Gunakan angka antara 1 sampai 100.", "Contoh: /set_confidence 70"), None
+        old = repository.get_setting(db, "min_confidence", str(settings.min_confidence))
         repository.set_setting(db, "min_confidence", parts[1])
-        return f"Min confidence set to {parts[1]}", None
+        return format_set_confidence_message(old, parts[1]), None
     if cmd == "/set_rr" and len(parts) == 2:
+        try:
+            value = float(parts[1])
+            if value < 1.0:
+                raise ValueError
+        except ValueError:
+            return format_error_message("Invalid RR Value", "Gunakan angka lebih dari atau sama dengan 1.0.", "Contoh: /set_rr 2.0"), None
+        old = repository.get_setting(db, "min_risk_reward", str(settings.min_risk_reward))
         repository.set_setting(db, "min_risk_reward", parts[1])
-        return f"Min RR set to {parts[1]}", None
+        return format_set_rr_message(old, parts[1]), None
     if cmd == "/last_scan":
         scan = repository.latest_scan(db)
-        return scan.summary_json if scan else "No scan yet.", None
+        return format_last_scan_message(scan), None
     if cmd in {"/diagnose_market", "/diagnose_binance"}:
         return "Running market provider diagnostic...", "diagnose_market"
-    return "Unknown command. Use /help", None
+    return format_error_message("Unknown Command", cmd, "Use /help"), None
