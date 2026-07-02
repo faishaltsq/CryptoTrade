@@ -33,7 +33,8 @@ class OKXProvider(MarketDataProvider):
                 last = float(item.get("last") or 0)
                 bid = float(item.get("bidPx") or 0)
                 ask = float(item.get("askPx") or 0)
-                rows.append({"symbol": okx_to_internal(item["instId"]), "provider_symbol": item["instId"], "last_price": last, "quote_volume": float(item.get("volCcy24h") or 0), "bid": bid, "ask": ask, "spread_pct": ((ask - bid) / last * 100) if last and bid and ask else 0})
+                open_24h = float(item.get("open24h") or 0)
+                rows.append({"symbol": okx_to_internal(item["instId"]), "provider_symbol": item["instId"], "last_price": last, "price_change_pct": ((last - open_24h) / open_24h * 100) if last and open_24h else 0, "quote_volume": float(item.get("volCcy24h") or 0), "bid": bid, "ask": ask, "spread_pct": ((ask - bid) / last * 100) if last and bid and ask else 0})
         return rows
 
     async def get_klines(self, symbol: str, interval: str, limit: int = 200) -> list[dict[str, Any]]:

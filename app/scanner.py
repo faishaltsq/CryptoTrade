@@ -111,7 +111,7 @@ class MarketScanner:
                     save_rejected_setup(db, symbol, "scanner error", {"error": str(exc)})
             summary = {
                 "pairs": [p["symbol"] for p in pairs],
-                "top_volume": [{"symbol": p["symbol"], "quote_volume": p["quote_volume"], "rank": p["volume_rank"]} for p in pairs[:20]],
+                "top_volume": [{"symbol": p["symbol"], "quote_volume": p["quote_volume"], "last_price": p.get("last_price", 0), "price_change_pct": p.get("price_change_pct", 0), "rank": p["volume_rank"]} for p in pairs[:20]],
                 "rejected_reasons": rejected_reasons,
                 "provider": provider.name,
             }
@@ -171,7 +171,7 @@ class MarketScanner:
 
 
 def merge_top_pairs(symbols: list[dict[str, Any]], tickers: list[dict[str, Any]], max_pairs: int) -> list[dict[str, Any]]:
-    active = {x["symbol"]: x for x in symbols if x.get("status") == "TRADING" and x.get("quote") == "USDT"}
+    active = {x["symbol"]: x for x in symbols if x.get("status") == "TRADING" and x.get("quote") == "USDT" and is_crypto_perp_symbol(x)}
     rows = []
     for ticker in tickers:
         symbol = ticker.get("symbol")
@@ -182,6 +182,12 @@ def merge_top_pairs(symbols: list[dict[str, Any]], tickers: list[dict[str, Any]]
     for idx, row in enumerate(rows, start=1):
         row["volume_rank"] = idx
     return rows[:max_pairs]
+
+
+def is_crypto_perp_symbol(row: dict[str, Any]) -> bool:
+    base = str(row.get("base") or row.get("symbol", "").replace("USDT", "")).upper()
+    denylist = {"XAU", "XAG", "SOXL", "SNDK", "SKHYNIX", "MU", "NVDA", "AAPL", "TSLA", "META", "GOOGL", "AMZN", "MSFT", "MSTR", "COIN"}
+    return base not in denylist
 
 
 def klines_to_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:

@@ -37,7 +37,7 @@ def volume_status(vol_spike: bool) -> str:
 
 def detect_setup(symbol: str, candles: dict[str, pd.DataFrame], futures_data: dict[str, Any], volume_rank: int, spread_pct: float, orderflow: dict[str, Any] | None = None) -> tuple[dict[str, Any] | None, str, dict[str, Any]]:
     settings = get_settings()
-    if any(len(df) < 210 for df in candles.values()):
+    if any(len(df) < 60 for df in candles.values()):
         return None, "insufficient_candle_data", {}
     tf = {name: analyze_timeframe(df) for name, df in candles.items()}
     price = tf["M15"]["price"]

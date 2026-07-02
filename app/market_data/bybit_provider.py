@@ -40,7 +40,7 @@ class BybitProvider(MarketDataProvider):
                 last = float(item.get("lastPrice") or 0)
                 bid = float(item.get("bid1Price") or 0)
                 ask = float(item.get("ask1Price") or 0)
-                rows.append({"symbol": item["symbol"], "provider_symbol": item["symbol"], "last_price": last, "quote_volume": float(item.get("turnover24h") or 0), "bid": bid, "ask": ask, "spread_pct": ((ask - bid) / last * 100) if last and bid and ask else 0})
+                rows.append({"symbol": item["symbol"], "provider_symbol": item["symbol"], "last_price": last, "price_change_pct": float(item.get("price24hPcnt") or 0) * 100, "quote_volume": float(item.get("turnover24h") or 0), "bid": bid, "ask": ask, "spread_pct": ((ask - bid) / last * 100) if last and bid and ask else 0})
         return rows
 
     async def get_klines(self, symbol: str, interval: str, limit: int = 200) -> list[dict[str, Any]]:

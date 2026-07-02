@@ -19,7 +19,7 @@ class MEXCProvider(MarketDataProvider):
     async def get_tickers(self) -> list[dict[str, Any]]:
         data = await self._get("/api/v1/contract/ticker")
         rows = data.get("data", []) if isinstance(data, dict) else []
-        return [{"symbol": mexc_to_internal(x["symbol"]), "provider_symbol": x["symbol"], "last_price": float(x.get("lastPrice") or 0), "quote_volume": float(x.get("amount24") or 0), "bid": float(x.get("bid1") or 0), "ask": float(x.get("ask1") or 0), "spread_pct": 0} for x in rows if x.get("symbol", "").endswith("_USDT")]
+        return [{"symbol": mexc_to_internal(x["symbol"]), "provider_symbol": x["symbol"], "last_price": float(x.get("lastPrice") or 0), "price_change_pct": float(x.get("riseFallRate") or 0) * 100, "quote_volume": float(x.get("amount24") or 0), "bid": float(x.get("bid1") or 0), "ask": float(x.get("ask1") or 0), "spread_pct": 0} for x in rows if x.get("symbol", "").endswith("_USDT")]
 
     async def get_klines(self, symbol: str, interval: str, limit: int = 200) -> list[dict[str, Any]]:
         data = await self._get(f"/api/v1/contract/kline/{internal_to_mexc(symbol)}", {"interval": normalize_interval(interval, self.name)})

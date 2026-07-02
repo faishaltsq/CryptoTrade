@@ -22,7 +22,7 @@ class GateProvider(MarketDataProvider):
             contract = x.get("contract", "")
             if contract.endswith("_USDT"):
                 last = float(x.get("last") or 0)
-                rows.append({"symbol": gate_to_internal(contract), "provider_symbol": contract, "last_price": last, "quote_volume": float(x.get("volume_24h_quote") or 0), "bid": 0, "ask": 0, "spread_pct": 0})
+                rows.append({"symbol": gate_to_internal(contract), "provider_symbol": contract, "last_price": last, "price_change_pct": float(x.get("change_percentage") or 0), "quote_volume": float(x.get("volume_24h_quote") or 0), "bid": 0, "ask": 0, "spread_pct": 0})
         return rows
 
     async def get_klines(self, symbol: str, interval: str, limit: int = 200) -> list[dict[str, Any]]:
