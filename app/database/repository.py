@@ -21,15 +21,15 @@ def save_scan_log(db: Session, total_pairs: int, candidates_count: int, valid_si
 
 def save_signal_log(db: Session, payload: dict[str, Any], ai_response: dict[str, Any], status: str = "pending") -> SignalLog:
     risk = ai_response.get("risk", {}) or {}
-    entry = ai_response.get("entry", {}) or {}
     scores = payload.get("scores", {}) or {}
     orderflow = payload.get("orderflow", {}) or {}
+    entry_zone = risk.get("entry_zone", "") or (ai_response.get("entry", {}) or {}).get("zone", "")
     row = SignalLog(
         symbol=ai_response.get("symbol") or payload.get("symbol", ""),
         decision=ai_response.get("decision", "WAIT"),
         confidence=int(ai_response.get("confidence") or 0),
         setup_type=ai_response.get("setup_type", "none"),
-        entry_zone=entry.get("zone", ""),
+        entry_zone=entry_zone,
         stop_loss=str(risk.get("stop_loss", "")),
         take_profit_1=str(risk.get("take_profit_1", "")),
         take_profit_2=str(risk.get("take_profit_2", "")),
@@ -124,7 +124,7 @@ def latest_scan(db: Session) -> ScanLog | None:
 
 
 def latest_signals(db: Session, limit: int = 10) -> list[SignalLog]:
-    return db.query(SignalLog).order_by(desc(SignalLog.timestamp)).limit(limit).all()
+    return db.query(SignalLog).filter(SignalLog.decision.in_(["BUY", "SELL"])).order_by(desc(SignalLog.timestamp)).limit(limit).all()
 
 
 def waiting_signals(db: Session, limit: int = 10) -> list[SignalLog]:
