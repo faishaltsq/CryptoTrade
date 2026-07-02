@@ -637,13 +637,15 @@ def format_orderflow_top_message(rows: list[Any]) -> str:
             unique.append(row)
         if len(unique) >= 15:
             break
+    unique.sort(key=lambda r: abs(getattr(r, "volume_delta", 0)), reverse=True)
     table = []
     for idx, row in enumerate(unique, start=1):
-        table.append(f"{idx:02d}  {h(getattr(row, 'symbol', '')):<10} {h(getattr(row, 'orderflow_bias', '')):<9} {compact_number(getattr(row, 'volume_delta', 0)):>9} {h(getattr(row, 'trade_intensity', '')):<9} {percent(getattr(row, 'open_interest_change', 0)):>7}")
+        symbol = getattr(row, "symbol", "")
+        table.append(f"{idx:02d}  {h(symbol):<15} {h(getattr(row, 'orderflow_bias', '')):<15} {compact_number(getattr(row, 'volume_delta', 0)):>10} {h(getattr(row, 'trade_intensity', '')):<10} {percent(getattr(row, 'open_interest_change', 0)):>8}")
     return f"""<b>📡 Top Orderflow Activity</b>
 
 {SEP}
-<pre>#   Pair       Bias      Delta      Intensity   OI%
+<pre>#   Pair            Bias             Delta       Intensity    OI%
 {chr(10).join(table)}</pre>"""
 
 

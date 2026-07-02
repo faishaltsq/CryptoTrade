@@ -48,7 +48,9 @@ class MarketScanner:
                     orderflow_summaries = orderflow_aggregator.summaries(symbol)
                     for snapshot in orderflow_summaries.values():
                         snapshot.update({"open_interest": futures_data.get("open_interest", 0), "open_interest_change": futures_data.get("open_interest_change", 0)})
-                        save_orderflow_snapshot(db, enrich_orderflow(snapshot))
+                        enriched = enrich_orderflow(snapshot)
+                        if enriched.get("trade_count", 0) > 0:
+                            save_orderflow_snapshot(db, enriched)
                     orderflow_summary = orderflow_summaries["1m"]
                     candidate, reason, tf_summary = detect_setup(symbol, candles, futures_data, pair.get("volume_rank", 0), pair.get("spread_pct", 0), orderflow_summary)
                     if not candidate:

@@ -140,7 +140,7 @@ def latest_orderflow(db: Session, symbol: str, limit: int = 10) -> list[Orderflo
 
 
 def latest_orderflow_activity(db: Session, limit: int = 30) -> list[OrderflowSnapshot]:
-    return db.query(OrderflowSnapshot).filter(OrderflowSnapshot.window == "1m").order_by(desc(OrderflowSnapshot.timestamp)).limit(limit).all()
+    return db.query(OrderflowSnapshot).filter(OrderflowSnapshot.window == "1m", OrderflowSnapshot.trade_count > 0).order_by(desc(OrderflowSnapshot.timestamp)).limit(limit).all()
 
 
 def get_signal(db: Session, signal_id: int) -> SignalLog | None:
