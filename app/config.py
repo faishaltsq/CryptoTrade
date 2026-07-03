@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     performance_lookback_days: int = Field(default=30, alias="PERFORMANCE_LOOKBACK_DAYS")
     learning_review_model: str = Field(default="deepseek-chat", alias="LEARNING_REVIEW_MODEL")
     learning_prompt_version: str = Field(default="ai_signal_review_v1", alias="LEARNING_PROMPT_VERSION")
+    signal_market_valid_minutes: int = Field(default=30, alias="SIGNAL_MARKET_VALID_MINUTES")
     bybit_rest_base_url: str = Field(default="https://api.bybit.com", alias="BYBIT_REST_BASE_URL")
     bybit_ws_linear_url: str = Field(default="wss://stream.bybit.com/v5/public/linear", alias="BYBIT_WS_LINEAR_URL")
     okx_rest_base_url: str = Field(default="https://www.okx.com", alias="OKX_REST_BASE_URL")

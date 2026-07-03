@@ -8,6 +8,8 @@ from math import ceil
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
+from app.config import get_settings
+
 
 SEP = "━━━━━━━━━━━━━━━"
 WIB = ZoneInfo("Asia/Jakarta")
@@ -84,6 +86,54 @@ def format_entry_zone(value: Any) -> str:
     if len(parts) == 2:
         return f"Entry 1: <code>{h(parts[0])}</code>\nEntry 2: <code>{h(parts[1])}</code>"
     return f"Entry: <code>{h(raw)}</code>"
+
+
+def signal_order_label(signal: dict[str, Any]) -> str:
+    risk = signal.get("risk", {}) or {}
+    entry_type = str(risk.get("entry_type") or "limit").lower()
+    if entry_type == "market" or entry_range_is_tight(risk.get("entry_zone")) or price_in_entry_range(signal.get("current_price"), risk.get("entry_zone")):
+        return "MARKET ORDER"
+    return "LIMIT ORDER"
+
+
+def format_signal_validity(signal: dict[str, Any]) -> str:
+    if signal_order_label(signal) != "MARKET ORDER":
+        return ""
+    settings = get_settings()
+    current_price = parse_float(signal.get("current_price"))
+    entry_zone = (signal.get("risk", {}) or {}).get("entry_zone")
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=settings.signal_market_valid_minutes)
+    if not current_price:
+        status = "UNKNOWN: harga terbaru tidak tersedia, cek chart sebelum entry."
+    elif not price_in_entry_range(current_price, entry_zone):
+        status = "INVALID / setup gagal: harga sudah di luar range entry."
+    else:
+        status = "VALID: eksekusi hanya jika harga masih di dalam range entry."
+    return f"\n\nValid Until: <b>{time_wib(valid_until)}</b>\nStatus: <b>{h(status)}</b>"
+
+
+def entry_range(value: Any) -> tuple[float, float] | None:
+    raw = str(value or "").strip().replace("–", "-").replace("—", "-").replace(" ", "")
+    parts = [parse_float(x) for x in raw.split("-") if x]
+    parts = [x for x in parts if x > 0]
+    if len(parts) != 2:
+        return None
+    return min(parts), max(parts)
+
+
+def price_in_entry_range(current_price: Any, entry_zone: Any) -> bool:
+    price_value = parse_float(current_price)
+    bounds = entry_range(entry_zone)
+    return bool(price_value and bounds and bounds[0] <= price_value <= bounds[1])
+
+
+def entry_range_is_tight(entry_zone: Any) -> bool:
+    bounds = entry_range(entry_zone)
+    if not bounds:
+        return False
+    low, high = bounds
+    mid = (low + high) / 2
+    return bool(mid and ((high - low) / mid) <= 0.003)
 
 
 def time_wib(value: Any = None) -> str:
@@ -498,7 +548,9 @@ def format_signal_candidate_admin_message(signal: dict[str, Any]) -> str:
     decision = signal.get("decision")
     setup_label = signal.get("setup_type", "no_trade").replace("_", " ").title()
     method_str = " | ".join(m.replace("_", " ").title() for m in methods) or "General Analysis"
-    return f"""<b>{side_emoji(decision)} {h(signal.get('symbol'))} — {h(decision)} Candidate</b>
+    order_label = signal_order_label(signal)
+    validity = format_signal_validity(signal)
+    return f"""<b>{side_emoji(decision)} {h(signal.get('symbol'))} — {h(decision)} {h(order_label)}</b>
 
 {SEP}
 <b>Decision:</b> {h(decision)}
@@ -524,6 +576,7 @@ Main Reason:
 SL: <code>{h(risk.get('stop_loss'))}</code>
 TP1: <code>{h(risk.get('take_profit_1'))}</code>
 TP2: <code>{h(risk.get('take_profit_2'))}</code>
+{validity}
 
 {SEP}
 <b>Score</b>

@@ -92,6 +92,7 @@ class MarketScanner:
                         ai_response["broadcast_allowed"] = False
                     ai_response["scores"] = candidate.get("scores", {})
                     ai_response["provider"] = candidate.get("provider", "")
+                    ai_response["current_price"] = candidate.get("current_price", 0)
                     adaptive = candidate.get("adaptive_scoring", {}) or {}
                     if adaptive.get("confidence_adjustment"):
                         ai_response["confidence"] = max(0, min(100, int(ai_response.get("confidence") or 0) + int(adaptive["confidence_adjustment"])))
