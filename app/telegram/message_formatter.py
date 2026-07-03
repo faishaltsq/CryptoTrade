@@ -75,6 +75,17 @@ def price(value: Any, symbol: str = "") -> str:
     return f"{number:,.4f}".rstrip("0").rstrip(".")
 
 
+def format_entry_zone(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return "Entry: <code></code>"
+    normalized = raw.replace("–", "-").replace("—", "-")
+    parts = [x.strip() for x in normalized.split("-") if x.strip()]
+    if len(parts) == 2:
+        return f"Entry 1: <code>{h(parts[0])}</code>\nEntry 2: <code>{h(parts[1])}</code>"
+    return f"Entry: <code>{h(raw)}</code>"
+
+
 def time_wib(value: Any = None) -> str:
     if value is None:
         dt = datetime.now(timezone.utc)
@@ -514,7 +525,7 @@ Main Reason:
 
 {SEP}
 <b>Trade Plan</b>
-Entry: <code>{h(risk.get('entry_zone'))}</code>
+{format_entry_zone(risk.get('entry_zone'))}
 SL: <code>{h(risk.get('stop_loss'))}</code>
 TP1: <code>{h(risk.get('take_profit_1'))}</code>
 TP2: <code>{h(risk.get('take_profit_2'))}</code>
@@ -555,7 +566,7 @@ def format_signal_broadcast_channel_message(signal: dict[str, Any]) -> str:
 
 {SEP}
 <b>Entry Zone</b>
-<code>{h(risk.get('entry_zone'))}</code>
+{format_entry_zone(risk.get('entry_zone'))}
 
 <b>Stop Loss</b>
 <code>{h(risk.get('stop_loss'))}</code>
@@ -677,7 +688,7 @@ def format_signal_row(item: dict[str, Any]) -> str:
     risk = item.get("risk", {}) or {}
     entry = item.get("entry", {}) or {}
     decision = item.get("decision")
-    return f"{side_emoji(decision)} <b>{h(item.get('symbol'))}</b> — {h(decision)}\nConfidence: <b>{h(item.get('confidence'))}%</b> | RR: <b>1:{h(risk.get('risk_reward'))}</b>\nEntry: <code>{h(entry.get('zone'))}</code>\nSL: <code>{h(risk.get('stop_loss'))}</code>\nTP: <code>{h(risk.get('take_profit_1'))}</code> / <code>{h(risk.get('take_profit_2'))}</code>"
+    return f"{side_emoji(decision)} <b>{h(item.get('symbol'))}</b> — {h(decision)}\nConfidence: <b>{h(item.get('confidence'))}%</b> | RR: <b>1:{h(risk.get('risk_reward'))}</b>\n{format_entry_zone(entry.get('zone'))}\nSL: <code>{h(risk.get('stop_loss'))}</code>\nTP: <code>{h(risk.get('take_profit_1'))}</code> / <code>{h(risk.get('take_profit_2'))}</code>"
 
 
 def format_signal_log_card(row: Any) -> str:
@@ -689,7 +700,7 @@ def format_signal_log_card(row: Any) -> str:
     return f"""{side_emoji(decision)} <b>{h(getattr(row, 'symbol', ''))}</b> — <b>{h(decision)} LIMIT</b>
 <b>Confidence:</b> {h(getattr(row, 'confidence', 0))}%
 <b>RR:</b> 1:{h(getattr(row, 'risk_reward', 0))}
-<b>Entry:</b> <code>{h(getattr(row, 'entry_zone', ''))}</code>
+{format_entry_zone(getattr(row, 'entry_zone', ''))}
 <b>SL:</b> <code>{h(getattr(row, 'stop_loss', ''))}</code>
 <b>TP:</b> <code>{h(getattr(row, 'take_profit_1', ''))}</code> / <code>{h(getattr(row, 'take_profit_2', ''))}</code>{price_line}
 <b>Status:</b> {h(outcome)}
@@ -712,7 +723,7 @@ def format_signal_detail_message(row: Any, outcome: Any | None = None) -> str:
 
 {SEP}
 <b>Trade Plan</b>
-Entry: <code>{h(getattr(row, 'entry_zone', ''))}</code>
+{format_entry_zone(getattr(row, 'entry_zone', ''))}
 SL: <code>{h(getattr(row, 'stop_loss', ''))}</code>
 TP1: <code>{h(getattr(row, 'take_profit_1', ''))}</code>
 TP2: <code>{h(getattr(row, 'take_profit_2', ''))}</code>
@@ -751,7 +762,7 @@ def format_pending_signals_message(rows: list[Any]) -> str:
         return "<b>⏳ Pending Signals</b>\n\nTidak ada signal pending."
     cards = []
     for row in rows[:20]:
-        cards.append(f"#{h(getattr(row, 'id', ''))} <b>{h(getattr(row, 'symbol', ''))}</b> {h(getattr(row, 'decision', ''))}\nEntry: <code>{h(getattr(row, 'entry_zone', ''))}</code>\nSL: <code>{h(getattr(row, 'stop_loss', ''))}</code>\nTP1: <code>{h(getattr(row, 'take_profit_1', ''))}</code>\nAge: {h(age_text(getattr(row, 'timestamp', None)))}")
+        cards.append(f"#{h(getattr(row, 'id', ''))} <b>{h(getattr(row, 'symbol', ''))}</b> {h(getattr(row, 'decision', ''))}\n{format_entry_zone(getattr(row, 'entry_zone', ''))}\nSL: <code>{h(getattr(row, 'stop_loss', ''))}</code>\nTP1: <code>{h(getattr(row, 'take_profit_1', ''))}</code>\nAge: {h(age_text(getattr(row, 'timestamp', None)))}")
     return f"""<b>⏳ Pending Signals</b>
 
 {SEP}
