@@ -639,6 +639,8 @@ def format_orderflow_top_message(rows: list[Any]) -> str:
     unique = []
     for row in rows:
         symbol = getattr(row, "symbol", "")
+        if not is_crypto_display_symbol(symbol):
+            continue
         if symbol not in seen:
             seen.add(symbol)
             unique.append(row)
@@ -648,12 +650,26 @@ def format_orderflow_top_message(rows: list[Any]) -> str:
     table = []
     for idx, row in enumerate(unique, start=1):
         symbol = getattr(row, "symbol", "")
-        table.append(f"{idx:02d}  {h(symbol):<15} {h(getattr(row, 'orderflow_bias', '')):<15} {compact_number(getattr(row, 'volume_delta', 0)):>10} {h(getattr(row, 'trade_intensity', '')):<10} {percent(getattr(row, 'open_interest_change', 0)):>8}")
+        table.append(f"{idx:02d}  {h(symbol):<15} {h(getattr(row, 'orderflow_bias', '')):<15} {compact_number(getattr(row, 'volume_delta', 0)):>10} {h(getattr(row, 'trade_intensity', '')):<10} {orderflow_oi_text(row):>8}")
     return f"""<b>📡 Top Orderflow Activity</b>
 
 {SEP}
 <pre>#   Pair            Bias             Delta       Intensity    OI%
 {chr(10).join(table)}</pre>"""
+
+
+def orderflow_oi_text(row: Any) -> str:
+    oi = float(getattr(row, "open_interest", 0) or 0)
+    change = float(getattr(row, "open_interest_change", 0) or 0)
+    if oi == 0 and change == 0:
+        return "-"
+    return percent(change)
+
+
+def is_crypto_display_symbol(symbol: str) -> bool:
+    base = str(symbol or "").upper().removesuffix("USDT")
+    denylist = {"XAU", "XAG", "SOXL", "SNDK", "SKHYNIX", "MU", "NVDA", "AAPL", "AAPLX", "TSLA", "META", "GOOGL", "AMZN", "MSFT", "MSTR", "COIN", "MRVL", "AAOI"}
+    return not any(base == item or base.startswith(item) for item in denylist)
 
 
 def format_error_message(title: str, error: Any, suggestion: str | None = None) -> str:
