@@ -100,6 +100,8 @@ class MarketScanner:
                     if ai_error:
                         logger.warning("AI response issue symbol=%s error=%s", symbol, ai_error)
                     ok, validation_reason = validate_for_broadcast(ai_response)
+                    ai_response["validation_status"] = "valid" if ok else "rejected"
+                    ai_response["validation_reason"] = validation_reason
                     broadcast_enabled = auto_broadcast_enabled(db, self.settings.auto_broadcast)
                     broadcast_status = "pending_admin" if ok else "skipped"
                     row = save_signal_log(db, candidate, ai_response, status="pending" if ok else "rejected", broadcast_status=broadcast_status)
@@ -113,12 +115,13 @@ class MarketScanner:
                                 logger.exception("Channel broadcast failed signal_id=%s symbol=%s", row.id, symbol)
                                 update_signal_status(db, row.id, "pending", "failed")
                                 rejected_reasons.append("channel_broadcast_failed")
+                    else:
+                        rejected_reasons.append(validation_reason)
+                    if ai_response.get("decision") in {"BUY", "SELL"}:
                         try:
                             await self.broadcaster.send_candidate_to_admin(row.id, ai_response)
                         except Exception:  # noqa: BLE001
                             logger.exception("Admin signal notification failed signal_id=%s symbol=%s", row.id, symbol)
-                    else:
-                        rejected_reasons.append(validation_reason)
                 except Exception as exc:  # noqa: BLE001
                     logger.exception("Scan failed for symbol=%s", symbol)
                     rejected_reasons.append("scanner error")

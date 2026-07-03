@@ -7,7 +7,14 @@ def icon(decision: str) -> str:
 
 
 def admin_signal_message(signal_id: int, ai: dict) -> str:
-    return format_signal_candidate_admin_message(ai) + f"\n\nSignal ID: <code>{signal_id}</code>"
+    validation = ai.get("validation_status", "")
+    reason = ai.get("validation_reason", "")
+    suffix = f"\n\nSignal ID: <code>{signal_id}</code>"
+    if validation:
+        suffix += f"\nValidation: <b>{validation}</b>"
+    if reason and reason != "valid":
+        suffix += f"\nValidation Reason: <code>{reason}</code>"
+    return format_signal_candidate_admin_message(ai) + suffix
 
 
 def channel_signal_message(ai: dict) -> str:
