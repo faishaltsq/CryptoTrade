@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     auto_broadcast: bool = Field(default=True, alias="AUTO_BROADCAST")
     min_confidence: int = Field(default=65, alias="MIN_CONFIDENCE")
     min_risk_reward: float = Field(default=2.0, alias="MIN_RISK_REWARD")
-    max_pairs: int = Field(default=80, alias="MAX_PAIRS")
+    max_pairs: int = Field(default=150, alias="MAX_PAIRS")
     scan_interval_minutes: int = Field(default=15, alias="SCAN_INTERVAL_MINUTES")
     database_url: str = Field(default="sqlite:///crypto_signal_bot.db", alias="DATABASE_URL")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")

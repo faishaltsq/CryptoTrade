@@ -106,6 +106,14 @@ MEXC_REST_BASE_URL=https://contract.mexc.com
 MEXC_SPOT_WS_URL=wss://wbs-api.mexc.com/ws
 ```
 
+Scan universe size:
+
+```env
+MAX_PAIRS=150
+```
+
+This expands the scan universe for liquid crypto perpetuals, including altcoin, memecoin, DeFi, and other crypto sectors while filtering known stock-like and metals contracts from mixed providers.
+
 Scanner tries providers in this order:
 
 1. `MARKET_PROVIDER`
