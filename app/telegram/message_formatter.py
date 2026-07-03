@@ -668,7 +668,7 @@ def orderflow_oi_text(row: Any) -> str:
 
 def is_crypto_display_symbol(symbol: str) -> bool:
     base = str(symbol or "").upper().removesuffix("USDT")
-    denylist = {"XAU", "XAG", "SOXL", "SNDK", "SKHYNIX", "MU", "NVDA", "AAPL", "AAPLX", "TSLA", "META", "GOOGL", "AMZN", "MSFT", "MSTR", "COIN", "MRVL", "AAOI"}
+    denylist = {"AAPL", "AAPLX", "AAOI", "AMD", "AMZN", "COIN", "DRAM", "GOOGL", "INTC", "META", "MRVL", "MSFT", "MSTR", "MU", "NVDA", "O", "SAMSUNG", "SKHYNIX", "SLX", "SNDK", "SOXL", "SPCX", "TSLA", "XAG", "XAU"}
     return not any(base == item or base.startswith(item) for item in denylist)
 
 

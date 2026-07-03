@@ -190,8 +190,10 @@ def merge_top_pairs(symbols: list[dict[str, Any]], tickers: list[dict[str, Any]]
 
 def is_crypto_perp_symbol(row: dict[str, Any]) -> bool:
     base = str(row.get("base") or row.get("symbol", "").replace("USDT", "")).upper()
-    denylist = {"XAU", "XAG", "SOXL", "SNDK", "SKHYNIX", "MU", "NVDA", "AAPL", "TSLA", "META", "GOOGL", "AMZN", "MSFT", "MSTR", "COIN"}
-    return base not in denylist
+    denylist = {
+        "AAPL", "AAPLX", "AAOI", "AMD", "AMZN", "COIN", "DRAM", "GOOGL", "INTC", "META", "MRVL", "MSFT", "MSTR", "MU", "NVDA", "O", "SAMSUNG", "SKHYNIX", "SLX", "SNDK", "SOXL", "SPCX", "TSLA", "XAG", "XAU"
+    }
+    return not any(base == item or base.startswith(item) for item in denylist)
 
 
 def klines_to_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
