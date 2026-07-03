@@ -31,6 +31,7 @@ class MarketScanner:
     async def scan(self) -> dict[str, Any]:
         db = SessionLocal()
         rejected_reasons: list[str] = []
+        rejected_details: list[dict[str, Any]] = []
         candidates = 0
         valid_signals = 0
         pairs: list[dict[str, Any]] = []
@@ -64,6 +65,8 @@ class MarketScanner:
                     candidate, reason, tf_summary = detect_setup(symbol, candles, futures_data, pair.get("volume_rank", 0), pair.get("spread_pct", 0), orderflow_summary)
                     if not candidate:
                         rejected_reasons.append(reason)
+                        if reason == "insufficient_candle_data":
+                            rejected_details.append({"symbol": symbol, "reason": reason, "candles": candle_counts(candles)})
                         save_rejected_setup(db, symbol, reason, {**tf_summary, "orderflow": orderflow_summary})
                         continue
                     candidate["provider"] = provider.name
@@ -113,11 +116,12 @@ class MarketScanner:
                 "pairs": [p["symbol"] for p in pairs],
                 "top_volume": [{"symbol": p["symbol"], "quote_volume": p["quote_volume"], "last_price": p.get("last_price", 0), "price_change_pct": p.get("price_change_pct", 0), "rank": p["volume_rank"]} for p in pairs[:20]],
                 "rejected_reasons": rejected_reasons,
+                "rejected_details": rejected_details[:30],
                 "provider": provider.name,
             }
             save_scan_log(db, len(pairs), candidates, valid_signals, len(rejected_reasons), summary)
             if valid_signals == 0:
-                await self.broadcaster.send_no_valid_setup(len(pairs), rejected_reasons, self.settings.scan_interval_minutes)
+                await self.broadcaster.send_no_valid_setup(len(pairs), rejected_reasons, self.settings.scan_interval_minutes, rejected_details)
             return {"total_pairs": len(pairs), "candidates": candidates, "valid_signals": valid_signals, "rejected": len(rejected_reasons), "summary": summary}
         finally:
             db.close()
@@ -197,6 +201,10 @@ def klines_to_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
     df["open_time"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
     df["close_time"] = df["open_time"]
     return df
+
+
+def candle_counts(candles: dict[str, pd.DataFrame]) -> dict[str, int]:
+    return {name: len(df) for name, df in candles.items()}
 
 
 def build_rest_orderflow_summary(symbol: str, trades: list[dict[str, Any]], orderbook: dict[str, Any]) -> dict[str, Any]:

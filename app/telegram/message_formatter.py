@@ -234,6 +234,7 @@ def format_no_setup_message(scan_result: dict[str, Any]) -> str:
     summary = scan_result.get("summary", {}) or {}
     reasons = Counter(summary.get("rejected_reasons", []) or [])
     rows = "\n".join(f"• {h(k.replace('_', ' ').title())}: <b>{v}</b>" for k, v in reasons.most_common()) or "• No rejected data"
+    candle_details = format_insufficient_candle_details(summary.get("rejected_details", []))
     return f"""<b>⚪ No Valid Setup</b>
 
 Tidak ada setup yang layak broadcast saat ini.
@@ -251,9 +252,25 @@ Tidak ada setup yang layak broadcast saat ini.
 {SEP}
 <b>Rejected Reasons</b>
 {rows}
+{candle_details}
 
 {SEP}
 <b>Next Scan:</b> sesuai scheduler"""
+
+
+def format_insufficient_candle_details(details: list[dict[str, Any]]) -> str:
+    rows = [x for x in details if x.get("reason") == "insufficient_candle_data"][:8]
+    if not rows:
+        return ""
+    lines = []
+    for item in rows:
+        counts = item.get("candles", {}) or {}
+        lines.append(f"• {h(item.get('symbol'))}: M15={h(counts.get('M15', 0))}, H1={h(counts.get('H1', 0))}, H4={h(counts.get('H4', 0))}, D1={h(counts.get('D1', 0))}")
+    return f"""
+
+{SEP}
+<b>Insufficient Candle Examples</b>
+{chr(10).join(lines)}"""
 
 
 def format_pairs_message(pairs: list[dict[str, Any]], page: int = 1, per_page: int = 20) -> str:
