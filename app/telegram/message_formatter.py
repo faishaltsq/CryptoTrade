@@ -786,7 +786,8 @@ def format_pending_signals_message(rows: list[Any]) -> str:
 def format_outcomes_message(rows: list[Any]) -> str:
     closed = [x for x in rows if getattr(x, "result", "pending") != "pending"]
     counts = Counter(getattr(x, "result", "") for x in closed)
-    latest = "\n".join(f"#{h(getattr(x, 'signal_id', ''))} {h(getattr(x, 'symbol', ''))} {h(getattr(x, 'decision', ''))} — {h(getattr(x, 'result', ''))}" for x in closed[:10]) or "Belum ada closed outcome."
+    visible = closed[:30]
+    latest = "\n".join(f"#{h(getattr(x, 'signal_id', ''))} {h(getattr(x, 'symbol', ''))} {h(getattr(x, 'decision', ''))} — {h(getattr(x, 'result', ''))}" for x in visible) or "Belum ada closed outcome."
     return f"""<b>📊 Recent Outcomes</b>
 
 {SEP}
@@ -798,7 +799,7 @@ SL: {counts.get('hit_sl', 0)}
 Expired: {counts.get('expired', 0)}
 
 {SEP}
-<b>Latest</b>
+<b>Latest ({len(visible)} shown)</b>
 {latest}"""
 
 
