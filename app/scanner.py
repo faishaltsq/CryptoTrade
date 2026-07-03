@@ -104,20 +104,22 @@ class MarketScanner:
                     ai_response["validation_status"] = "valid" if ok else "rejected"
                     ai_response["validation_reason"] = validation_reason
                     broadcast_enabled = auto_broadcast_enabled(db, self.settings.auto_broadcast)
-                    broadcast_status = "pending_admin" if ok else "skipped"
+                    should_publish = ai_response.get("decision") in {"BUY", "SELL"}
+                    broadcast_status = "pending_admin" if should_publish else "skipped"
                     row = save_signal_log(db, candidate, ai_response, status="pending" if ok else "rejected", broadcast_status=broadcast_status)
+                    ai_response["signal_id"] = row.id
                     if ok:
                         valid_signals += 1
-                        if broadcast_enabled:
-                            try:
-                                await self.broadcaster.broadcast_channel(ai_response)
-                                update_signal_status(db, row.id, "broadcasted", "broadcasted")
-                            except Exception as exc:  # noqa: BLE001
-                                logger.exception("Channel broadcast failed signal_id=%s symbol=%s", row.id, symbol)
-                                update_signal_status(db, row.id, "pending", "failed")
-                                rejected_reasons.append("channel_broadcast_failed")
                     else:
                         rejected_reasons.append(validation_reason)
+                    if should_publish and broadcast_enabled:
+                        try:
+                            await self.broadcaster.broadcast_channel(ai_response)
+                            update_signal_status(db, row.id, "broadcasted" if ok else "rejected", "broadcasted")
+                        except Exception as exc:  # noqa: BLE001
+                            logger.exception("Channel broadcast failed signal_id=%s symbol=%s", row.id, symbol)
+                            update_signal_status(db, row.id, "pending" if ok else "rejected", "failed")
+                            rejected_reasons.append("channel_broadcast_failed")
                     if ai_response.get("decision") in {"BUY", "SELL"}:
                         try:
                             await self.broadcaster.send_candidate_to_admin(row.id, ai_response)

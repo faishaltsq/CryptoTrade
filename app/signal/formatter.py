@@ -1,5 +1,5 @@
 from collections import Counter
-from app.telegram.message_formatter import format_signal_broadcast_channel_message, format_signal_candidate_admin_message
+from app.telegram.message_formatter import format_signal_candidate_admin_message
 
 
 def icon(decision: str) -> str:
@@ -7,18 +7,22 @@ def icon(decision: str) -> str:
 
 
 def admin_signal_message(signal_id: int, ai: dict) -> str:
+    return format_signal_candidate_admin_message(ai) + signal_footer(ai, signal_id)
+
+
+def channel_signal_message(ai: dict) -> str:
+    return format_signal_candidate_admin_message(ai) + signal_footer(ai, ai.get("signal_id"))
+
+
+def signal_footer(ai: dict, signal_id: int | None = None) -> str:
     validation = ai.get("validation_status", "")
     reason = ai.get("validation_reason", "")
-    suffix = f"\n\nSignal ID: <code>{signal_id}</code>"
+    suffix = f"\n\nSignal ID: <code>{signal_id}</code>" if signal_id else ""
     if validation:
         suffix += f"\nValidation: <b>{validation}</b>"
     if reason and reason != "valid":
         suffix += f"\nValidation Reason: <code>{reason}</code>"
-    return format_signal_candidate_admin_message(ai) + suffix
-
-
-def channel_signal_message(ai: dict) -> str:
-    return format_signal_candidate_admin_message(ai)
+    return suffix
 
 
 def no_valid_setup_message(total_pairs: int, rejected_reasons: list[str], next_scan_minutes: int, rejected_details: list[dict] | None = None) -> str:
