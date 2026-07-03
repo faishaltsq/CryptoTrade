@@ -98,10 +98,10 @@ def command_keyboard() -> dict:
             [{"text": "Signals", "callback_data": "cmd:signals"}, {"text": "Waiting", "callback_data": "cmd:waiting"}],
             [{"text": "Pending Signals", "callback_data": "cmd:pending_signals"}, {"text": "Outcomes", "callback_data": "cmd:outcomes"}],
             [{"text": "Performance", "callback_data": "cmd:performance"}, {"text": "Lessons", "callback_data": "cmd:lessons"}],
+            [{"text": "Learning Status", "callback_data": "cmd:learning_status"}, {"text": "Orderflow Top", "callback_data": "cmd:orderflow_top"}],
             [{"text": "Settings", "callback_data": "cmd:settings"}, {"text": "Last Scan", "callback_data": "cmd:last_scan"}],
             [{"text": "Broadcast ON", "callback_data": "cmd:broadcast_on"}, {"text": "Broadcast OFF", "callback_data": "cmd:broadcast_off"}],
             [{"text": "Diagnose Market", "callback_data": "cmd:diagnose_market"}, {"text": "Help", "callback_data": "cmd:help"}],
-            [{"text": "Orderflow Top", "callback_data": "cmd:orderflow_top"}],
         ]
     }
 
