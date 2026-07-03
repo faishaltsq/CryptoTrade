@@ -139,7 +139,6 @@ def format_help_message() -> str:
 <code>/pairs</code> — Daftar pair yang dipantau
 <code>/top_volume</code> — Pair dengan volume tertinggi
 <code>/diagnose_market</code> — Cek koneksi market provider
-<code>/diagnose_binance</code> — Cek endpoint Binance legacy
 <code>/orderflow BTCUSDT</code> — Ringkasan orderflow symbol
 <code>/orderflow_top</code> — Top aktivitas orderflow
 
@@ -447,27 +446,6 @@ def format_last_scan_message(scan_log: Any) -> str:
 {SEP}
 <b>Latest Valid Signals</b>
 ⚪ Tidak ada signal valid pada scan terakhir."""
-
-
-def format_diagnose_binance_message(result: list[dict[str, Any]]) -> str:
-    rows = []
-    statuses = []
-    for idx, row in enumerate(result, start=1):
-        status = row.get("status_code", "error")
-        statuses.append(status)
-        rows.append(f"<b>{idx}. {h(row.get('name'))}</b>\nURL: <code>{h(row.get('endpoint'))}</code>\nStatus: <b>{h(status)}</b>\nContent-Type: <code>{h(row.get('content_type', ''))}</code>\nLocation: <code>{h(row.get('location') or '-')}</code>")
-    footer = "✅ Binance market endpoint accessible." if all(s == 200 for s in statuses) else "⚠️ Redirect/rate-limit/network issue detected."
-    return f"""<b>🧪 Binance Diagnostic</b>
-
-{SEP}
-<b>Status:</b> {h('OK' if all(s == 200 for s in statuses) else 'WARNING')}
-<b>Time:</b> {time_wib()}
-
-{SEP}
-{chr(10).join(rows)}
-
-{SEP}
-{footer}"""
 
 
 def format_diagnose_provider_message(result: list[dict[str, Any]]) -> str:

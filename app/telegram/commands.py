@@ -261,7 +261,7 @@ def handle_command(db: Session, text: str) -> tuple[str, str | None]:
     if cmd == "/last_scan":
         scan = repository.latest_scan(db)
         return format_last_scan_message(scan), None
-    if cmd in {"/diagnose_market", "/diagnose_binance"}:
+    if cmd == "/diagnose_market":
         return "Running market provider diagnostic...", "diagnose_market"
     if cmd == "/orderflow":
         if len(parts) < 2:

@@ -25,7 +25,6 @@ The project does not place trades. It does not use private exchange APIs, tradin
 - SQLite MVP database with SQLAlchemy models.
 - FastAPI API and Swagger docs.
 - APScheduler scheduled scans.
-- Binance diagnostic module retained for troubleshooting only; scanner does not depend on Binance by default.
 
 ## Safety Rules
 
@@ -476,26 +475,6 @@ Telegram command:
 ```
 
 This checks configured providers from `MARKET_PROVIDER`, `FALLBACK_MARKET_PROVIDER`, and `ALTCOIN_PROVIDER`, then reports symbol/ticker availability and provider errors.
-
-## Binance Diagnostic
-
-Binance is not required for the default scanner, but a diagnostic tool is available:
-
-```bash
-python -m app.market_data.binance_diagnostic
-```
-
-Legacy Telegram command:
-
-```text
-/diagnose_binance
-```
-
-Use `/diagnose_market` for general provider checks.
-
-Diagnostic uses `follow_redirects=False` and reports endpoint, status code, `Location`, content type, and a 300-character body preview.
-
-HTTP `301/302` means a redirect was detected. The bot does not follow redirects silently and does not use `https://www.binance.com` as a market data source.
 
 ## Development Notes
 
