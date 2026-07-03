@@ -76,7 +76,7 @@ def create_signal_log(db: Session, payload: dict[str, Any], ai_response: dict[st
     db.add(row)
     db.commit()
     db.refresh(row)
-    if decision in {"BUY", "SELL"}:
+    if decision in {"BUY", "SELL"} and status != "rejected":
         create_signal_outcome(db, row.id, {})
     return row
 
@@ -182,7 +182,7 @@ def get_recent_signals(db: Session, limit: int = 10) -> list[SignalLog]:
 
 
 def get_pending_signals(db: Session) -> list[SignalLog]:
-    return db.query(SignalLog).filter(SignalLog.outcome_status == "pending", SignalLog.decision.in_(["BUY", "SELL"])).order_by(desc(SignalLog.timestamp)).all()
+    return db.query(SignalLog).filter(SignalLog.outcome_status == "pending", SignalLog.decision.in_(["BUY", "SELL"]), SignalLog.status != "rejected", SignalLog.broadcast_status.in_(["broadcasted", "approved"])).order_by(desc(SignalLog.timestamp)).all()
 
 
 def waiting_signals(db: Session, limit: int = 10) -> list[SignalLog]:
@@ -225,7 +225,7 @@ def get_signal_outcome(db: Session, signal_id: int) -> SignalOutcome | None:
 
 
 def get_recent_outcomes(db: Session, limit: int = 10) -> list[SignalOutcome]:
-    return db.query(SignalOutcome).order_by(desc(SignalOutcome.updated_at)).limit(limit).all()
+    return db.query(SignalOutcome).join(SignalLog, SignalLog.id == SignalOutcome.signal_id).filter(SignalLog.status != "rejected", SignalLog.broadcast_status.in_(["broadcasted", "approved"])).order_by(desc(SignalOutcome.updated_at)).limit(limit).all()
 
 
 def get_closed_unreviewed_signals(db: Session, limit: int = 20) -> list[SignalLog]:

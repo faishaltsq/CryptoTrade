@@ -101,14 +101,22 @@ class MarketScanner:
                         logger.warning("AI response issue symbol=%s error=%s", symbol, ai_error)
                     ok, validation_reason = validate_for_broadcast(ai_response)
                     broadcast_enabled = auto_broadcast_enabled(db, self.settings.auto_broadcast)
-                    broadcast_status = "broadcasted" if (ok and broadcast_enabled) else "pending_admin"
+                    broadcast_status = "pending_admin" if ok else "skipped"
                     row = save_signal_log(db, candidate, ai_response, status="pending" if ok else "rejected", broadcast_status=broadcast_status)
                     if ok:
                         valid_signals += 1
                         if broadcast_enabled:
-                            await self.broadcaster.broadcast_channel(ai_response)
-                            update_signal_status(db, row.id, "broadcasted", "broadcasted")
-                        await self.broadcaster.send_candidate_to_admin(row.id, ai_response)
+                            try:
+                                await self.broadcaster.broadcast_channel(ai_response)
+                                update_signal_status(db, row.id, "broadcasted", "broadcasted")
+                            except Exception as exc:  # noqa: BLE001
+                                logger.exception("Channel broadcast failed signal_id=%s symbol=%s", row.id, symbol)
+                                update_signal_status(db, row.id, "pending", "failed")
+                                rejected_reasons.append("channel_broadcast_failed")
+                        try:
+                            await self.broadcaster.send_candidate_to_admin(row.id, ai_response)
+                        except Exception:  # noqa: BLE001
+                            logger.exception("Admin signal notification failed signal_id=%s symbol=%s", row.id, symbol)
                     else:
                         rejected_reasons.append(validation_reason)
                 except Exception as exc:  # noqa: BLE001
