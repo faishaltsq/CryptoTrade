@@ -214,6 +214,7 @@ ENABLE_OUTCOME_TRACKING=false
 Telegram commands:
 
 - `/signals` shows recent BUY/SELL signals.
+- `/signal_recap` shows all BUY/SELL signals for the current WIB day.
 - `/signal_detail ID` shows full signal context and status.
 - `/signal_result ID RESULT` manually updates a signal outcome.
 - `/pending_signals` shows signals still waiting for TP/SL/expiry.
@@ -314,6 +315,12 @@ Learning commands:
 - `/review_signal ID`
 - `/signal_result ID RESULT`
 - `/learning_status`
+
+Daily recap:
+
+- The bot sends an automatic signal recap every day at `21:00 WIB`.
+- Recap includes all BUY/SELL signals for that day without filtering: valid, rejected, broadcasted, failed, pending, TP, SL, and expired.
+- Long recap messages are split automatically for Telegram delivery.
 
 Aggressive trade interpretation:
 

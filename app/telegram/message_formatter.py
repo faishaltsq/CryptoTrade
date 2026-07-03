@@ -386,6 +386,61 @@ Jalankan <code>/scan_now</code> untuk scan manual."""
 {cards}"""
 
 
+def format_daily_signal_recap_message(signals: list[Any], label: str = "Today") -> str:
+    if not signals:
+        return f"""<b>📋 Daily Signal Recap</b>
+
+{SEP}
+<b>Period:</b> {h(label)}
+Tidak ada signal BUY/SELL hari ini."""
+    decisions = Counter(getattr(x, "decision", "") for x in signals)
+    outcomes = Counter(getattr(x, "outcome_status", "") for x in signals)
+    broadcasts = Counter(getattr(x, "broadcast_status", "") for x in signals)
+    validations = Counter(signal_validation_status(x) for x in signals)
+    rows = []
+    for row in signals:
+        rows.append(
+            f"#{h(getattr(row, 'id', ''))} {side_emoji(getattr(row, 'decision', ''))} <b>{h(getattr(row, 'symbol', ''))}</b> {h(getattr(row, 'decision', ''))} "
+            f"conf={h(getattr(row, 'confidence', 0))}% rr=1:{h(getattr(row, 'risk_reward', 0))} "
+            f"validation={h(signal_validation_status(row))} broadcast={h(getattr(row, 'broadcast_status', ''))} outcome={h(getattr(row, 'outcome_status', ''))} "
+            f"time={time_wib(getattr(row, 'timestamp', None))}"
+        )
+    return f"""<b>📋 Daily Signal Recap</b>
+
+{SEP}
+<b>Period:</b> {h(label)}
+<b>Total Signals:</b> {len(signals)}
+BUY: {decisions.get('BUY', 0)} | SELL: {decisions.get('SELL', 0)}
+
+{SEP}
+<b>Validation</b>
+Valid: {validations.get('valid', 0)}
+Rejected: {validations.get('rejected', 0)}
+Unknown: {validations.get('-', 0)}
+
+<b>Broadcast</b>
+Broadcasted: {broadcasts.get('broadcasted', 0)}
+Pending/Admin: {broadcasts.get('pending_admin', 0)}
+Failed: {broadcasts.get('failed', 0)}
+Skipped: {broadcasts.get('skipped', 0)}
+
+<b>Outcome</b>
+Pending: {outcomes.get('pending', 0)}
+TP1: {outcomes.get('hit_tp1', 0)}
+TP2: {outcomes.get('hit_tp2', 0)}
+SL: {outcomes.get('hit_sl', 0)}
+Expired: {outcomes.get('expired', 0)}
+
+{SEP}
+<b>All Signals</b>
+{chr(10).join(rows)}"""
+
+
+def signal_validation_status(row: Any) -> str:
+    data = parse_json(getattr(row, "ai_response_json", "{}"), {}) or {}
+    return data.get("validation_status") or ("rejected" if getattr(row, "status", "") == "rejected" else "valid" if getattr(row, "broadcast_status", "") == "broadcasted" else "-")
+
+
 def format_waiting_message(waiting_items: list[Any], page: int = 1, per_page: int = 15) -> str:
     items, page, total_pages = paginate_items(waiting_items, page, per_page)
     rows = []

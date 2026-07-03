@@ -1,4 +1,6 @@
 import json
+from datetime import datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.database import repository
@@ -6,6 +8,7 @@ from app.telegram.message_formatter import (
     format_broadcast_off_message,
     format_broadcast_on_message,
     format_error_message,
+    format_daily_signal_recap_message,
     format_help_message,
     format_last_scan_message,
     format_learning_status_message,
@@ -43,6 +46,7 @@ HELP_TEXT = """Commands:
 /pairs
 /top_volume
 /signals
+/signal_recap
 /signal_detail ID
 /signal_result ID RESULT
 /pending_signals
@@ -74,6 +78,7 @@ COMMAND_CALLBACKS = {
     "pairs": "/pairs",
     "top_volume": "/top_volume",
     "signals": "/signals",
+    "signal_recap": "/signal_recap",
     "pending_signals": "/pending_signals",
     "outcomes": "/outcomes",
     "performance": "/performance",
@@ -96,6 +101,7 @@ def command_keyboard() -> dict:
             [{"text": "Status", "callback_data": "cmd:status"}, {"text": "Scan Now", "callback_data": "cmd:scan_now"}],
             [{"text": "Pairs", "callback_data": "cmd:pairs"}, {"text": "Top Volume", "callback_data": "cmd:top_volume"}],
             [{"text": "Signals", "callback_data": "cmd:signals"}, {"text": "Waiting", "callback_data": "cmd:waiting"}],
+            [{"text": "Signal Recap", "callback_data": "cmd:signal_recap"}],
             [{"text": "Pending Signals", "callback_data": "cmd:pending_signals"}, {"text": "Outcomes", "callback_data": "cmd:outcomes"}],
             [{"text": "Performance", "callback_data": "cmd:performance"}, {"text": "Lessons", "callback_data": "cmd:lessons"}],
             [{"text": "Learning Status", "callback_data": "cmd:learning_status"}, {"text": "Orderflow Top", "callback_data": "cmd:orderflow_top"}],
@@ -168,6 +174,9 @@ def handle_command(db: Session, text: str) -> tuple[str, str | None]:
         rows = repository.get_recent_signals(db, 100)
         attach_signal_market_state(db, rows)
         return format_signals_message(rows, page), f"keyboard:signals:{page}:{max(1, (len(rows) + 9) // 10)}:{rows[0].id if rows else ''}"
+    if cmd == "/signal_recap":
+        start, end, label = today_wib_range()
+        return format_daily_signal_recap_message(repository.get_signals_between(db, start, end), label), None
     if cmd == "/signal_detail":
         if len(parts) < 2 or not parts[1].isdigit():
             return format_error_message("Missing Signal ID", "Gunakan format /signal_detail ID", "Contoh: /signal_detail 123"), None
@@ -303,3 +312,11 @@ def parse_lesson_arg(db: Session, parts: list[str]):
     if len(parts) < 2 or not parts[1].isdigit():
         return None
     return repository.get_lesson(db, int(parts[1]))
+
+
+def today_wib_range() -> tuple[datetime, datetime, str]:
+    wib = ZoneInfo("Asia/Jakarta")
+    now = datetime.now(wib)
+    start_wib = datetime.combine(now.date(), time.min, tzinfo=wib)
+    end_wib = start_wib + timedelta(days=1)
+    return start_wib.astimezone(timezone.utc), end_wib.astimezone(timezone.utc), now.strftime("%d %b %Y WIB")

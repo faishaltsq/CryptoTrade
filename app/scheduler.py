@@ -1,14 +1,18 @@
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 from app.utils.time import iso_utc
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.config import get_settings
+from app.database import repository
 from app.database.session import SessionLocal
 from app.learning.outcome_tracker import track_pending_outcomes
 from app.learning.post_trade_reviewer import review_pending_completed
 from app.orderflow.orderflow_aggregator import orderflow_aggregator
 from app.scanner import scanner
+from app.telegram.admin_bot import TelegramBot
+from app.telegram.message_formatter import format_daily_signal_recap_message
 
 
 logger = logging.getLogger(__name__)
@@ -80,8 +84,32 @@ def start_scheduler() -> None:
     settings = get_settings()
     if not scheduler.running:
         scheduler.add_job(scan_job, "interval", minutes=settings.scan_interval_minutes, id="market_scan", replace_existing=True, next_run_time=datetime.now(timezone.utc))
+        scheduler.add_job(daily_signal_recap_job, "cron", hour=21, minute=0, timezone=ZoneInfo("Asia/Jakarta"), id="daily_signal_recap", replace_existing=True)
         scheduler.start()
         logger.info("Scheduler started interval=%s minutes", settings.scan_interval_minutes)
+
+
+async def daily_signal_recap_job() -> None:
+    db = SessionLocal()
+    try:
+        start, end, label = today_wib_range()
+        message = format_daily_signal_recap_message(repository.get_signals_between(db, start, end), label)
+        bot = TelegramBot()
+        await bot.send_admin(message)
+        await bot.send_channel(message)
+        logger.info("Daily signal recap sent label=%s", label)
+    except Exception:  # noqa: BLE001
+        logger.exception("Daily signal recap failed")
+    finally:
+        db.close()
+
+
+def today_wib_range() -> tuple[datetime, datetime, str]:
+    wib = ZoneInfo("Asia/Jakarta")
+    now = datetime.now(wib)
+    start_wib = datetime.combine(now.date(), time.min, tzinfo=wib)
+    end_wib = start_wib + timedelta(days=1)
+    return start_wib.astimezone(timezone.utc), end_wib.astimezone(timezone.utc), now.strftime("%d %b %Y WIB")
 
 
 def stop_scheduler() -> None:

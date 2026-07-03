@@ -181,6 +181,10 @@ def get_recent_signals(db: Session, limit: int = 10) -> list[SignalLog]:
     return db.query(SignalLog).filter(SignalLog.decision.in_(["BUY", "SELL"])).order_by(desc(SignalLog.timestamp)).limit(limit).all()
 
 
+def get_signals_between(db: Session, start, end) -> list[SignalLog]:
+    return db.query(SignalLog).filter(SignalLog.decision.in_(["BUY", "SELL"]), SignalLog.timestamp >= start, SignalLog.timestamp < end).order_by(SignalLog.timestamp.asc(), SignalLog.id.asc()).all()
+
+
 def get_pending_signals(db: Session) -> list[SignalLog]:
     return db.query(SignalLog).filter(SignalLog.outcome_status == "pending", SignalLog.decision.in_(["BUY", "SELL"])).order_by(desc(SignalLog.timestamp)).all()
 
