@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import ssl
 from abc import ABC, abstractmethod
 from typing import Any
 import websockets
@@ -24,6 +25,7 @@ class OrderflowProvider(ABC):
         self.orderbook = OrderBookFlowStore()
         self.liquidations = LiquidationFlowStore()
         self.tasks: list[asyncio.Task] = []
+        self._last_connection_error = ""
 
     async def stop(self) -> None:
         for task in self.tasks:
@@ -45,10 +47,18 @@ class OrderflowProvider(ABC):
                             logger.exception("%s orderflow parse failed", self.name)
             except asyncio.CancelledError:
                 raise
-            except Exception:  # noqa: BLE001
-                logger.exception("%s orderflow websocket failed reconnect_in=%s", self.name, backoff)
+            except Exception as exc:  # noqa: BLE001
+                self.log_connection_error(exc, backoff)
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30)
+
+    def log_connection_error(self, exc: Exception, backoff: int) -> None:
+        message = compact_connection_error(exc)
+        if message != self._last_connection_error:
+            logger.warning("%s orderflow websocket unavailable: %s; reconnect_in=%ss", self.name, message, backoff)
+            self._last_connection_error = message
+            return
+        logger.debug("%s orderflow websocket still unavailable: %s; reconnect_in=%ss", self.name, message, backoff)
 
     @abstractmethod
     async def send_subscribe(self, ws, args: list[str]) -> None: ...
@@ -86,3 +96,16 @@ class OrderflowProvider(ABC):
 
     def get_summaries(self, symbol: str) -> dict[str, dict[str, Any]]:
         return {window: self.get_summary(symbol, window) for window in self.windows}
+
+
+def compact_connection_error(exc: Exception) -> str:
+    if isinstance(exc, ssl.SSLCertVerificationError):
+        return "ssl_certificate_verification_failed"
+    if isinstance(exc, TimeoutError):
+        return "websocket_handshake_timeout"
+    text = str(exc).strip()
+    if "CERTIFICATE_VERIFY_FAILED" in text or "Hostname mismatch" in text:
+        return "ssl_certificate_verification_failed"
+    if "timed out during opening handshake" in text:
+        return "websocket_handshake_timeout"
+    return text[:160] or exc.__class__.__name__
