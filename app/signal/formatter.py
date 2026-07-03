@@ -11,7 +11,7 @@ def admin_signal_message(signal_id: int, ai: dict) -> str:
 
 
 def channel_signal_message(ai: dict) -> str:
-    return format_signal_broadcast_channel_message(ai)
+    return format_signal_candidate_admin_message(ai)
 
 
 def no_valid_setup_message(total_pairs: int, rejected_reasons: list[str], next_scan_minutes: int, rejected_details: list[dict] | None = None) -> str:

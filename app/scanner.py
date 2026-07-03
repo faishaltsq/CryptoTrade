@@ -91,6 +91,7 @@ class MarketScanner:
                         ai_response["orderflow"]["conflict"] = True
                         ai_response["broadcast_allowed"] = False
                     ai_response["scores"] = candidate.get("scores", {})
+                    ai_response["provider"] = candidate.get("provider", "")
                     adaptive = candidate.get("adaptive_scoring", {}) or {}
                     if adaptive.get("confidence_adjustment"):
                         ai_response["confidence"] = max(0, min(100, int(ai_response.get("confidence") or 0) + int(adaptive["confidence_adjustment"])))
@@ -99,13 +100,15 @@ class MarketScanner:
                     if ai_error:
                         logger.warning("AI response issue symbol=%s error=%s", symbol, ai_error)
                     ok, validation_reason = validate_for_broadcast(ai_response)
-                    row = save_signal_log(db, candidate, ai_response, status="pending" if ok else "rejected")
+                    broadcast_enabled = auto_broadcast_enabled(db, self.settings.auto_broadcast)
+                    broadcast_status = "broadcasted" if (ok and broadcast_enabled) else "pending_admin"
+                    row = save_signal_log(db, candidate, ai_response, status="pending" if ok else "rejected", broadcast_status=broadcast_status)
                     if ok:
                         valid_signals += 1
-                        await self.broadcaster.send_candidate_to_admin(row.id, ai_response)
-                        if auto_broadcast_enabled(db, self.settings.auto_broadcast):
+                        if broadcast_enabled:
                             await self.broadcaster.broadcast_channel(ai_response)
                             update_signal_status(db, row.id, "broadcasted", "broadcasted")
+                        await self.broadcaster.send_candidate_to_admin(row.id, ai_response)
                     else:
                         rejected_reasons.append(validation_reason)
                 except Exception as exc:  # noqa: BLE001

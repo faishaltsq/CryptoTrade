@@ -24,8 +24,8 @@ def save_scan_log(db: Session, total_pairs: int, candidates_count: int, valid_si
     return row
 
 
-def save_signal_log(db: Session, payload: dict[str, Any], ai_response: dict[str, Any], status: str = "pending") -> SignalLog:
-    return create_signal_log(db, payload, ai_response, status)
+def save_signal_log(db: Session, payload: dict[str, Any], ai_response: dict[str, Any], status: str = "pending", broadcast_status: str | None = None) -> SignalLog:
+    return create_signal_log(db, payload, ai_response, status, broadcast_status)
 
 
 def create_signal_log(db: Session, payload: dict[str, Any], ai_response: dict[str, Any], status: str = "pending", broadcast_status: str | None = None) -> SignalLog:

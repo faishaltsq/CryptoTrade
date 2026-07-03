@@ -1,5 +1,5 @@
 from app.signal.formatter import admin_signal_message, channel_signal_message, no_valid_setup_message
-from app.telegram.admin_bot import TelegramBot, approval_keyboard
+from app.telegram.admin_bot import TelegramBot
 
 
 class SignalBroadcaster:
@@ -7,7 +7,7 @@ class SignalBroadcaster:
         self.bot = TelegramBot()
 
     async def send_candidate_to_admin(self, signal_id: int, ai_response: dict) -> None:
-        await self.bot.send_admin(admin_signal_message(signal_id, ai_response), approval_keyboard(signal_id))
+        await self.bot.send_admin(admin_signal_message(signal_id, ai_response))
 
     async def broadcast_channel(self, ai_response: dict) -> None:
         await self.bot.send_channel(channel_signal_message(ai_response))
