@@ -23,6 +23,7 @@ from app.telegram.message_formatter import (
     format_pairs_message,
     format_performance_message,
     format_pending_signals_message,
+    format_restart_confirm_message,
     format_set_confidence_message,
     format_set_rr_message,
     format_set_interval_message,
@@ -67,6 +68,7 @@ HELP_TEXT = """Commands:
 /set_interval <minutes>
 /broadcast_on
 /broadcast_off
+/restart
 /last_scan
 /diagnose_market
 /orderflow SYMBOL
@@ -279,6 +281,8 @@ def handle_command(db: Session, text: str) -> tuple[str, str | None]:
         old = repository.get_setting(db, "scan_interval_minutes", str(settings.scan_interval_minutes))
         repository.set_setting(db, "scan_interval_minutes", parts[1])
         return format_set_interval_message(old, parts[1]), None
+    if cmd == "/restart":
+        return format_restart_confirm_message(), "restart_prompt"
     if cmd == "/last_scan":
         scan = repository.latest_scan(db)
         return format_last_scan_message(scan), None

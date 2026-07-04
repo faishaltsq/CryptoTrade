@@ -1,5 +1,7 @@
 import asyncio
 import json
+import os
+import sys
 from fastapi import Depends, FastAPI, Request
 from sqlalchemy.orm import Session
 from app.config import get_settings
@@ -11,7 +13,7 @@ from app.scheduler import run_scan_now, scan_job, scan_state, scheduler_info, st
 from app.telegram.admin_bot import TelegramBot
 from app.telegram.callbacks import handle_callback
 from app.telegram.commands import command_from_callback, command_keyboard, handle_command, is_admin, pagination_keyboard, signal_list_keyboard
-from app.telegram.message_formatter import format_access_denied_message, format_diagnose_provider_message, format_no_setup_message, format_scan_result_message, format_signal_review_message
+from app.telegram.message_formatter import format_access_denied_message, format_diagnose_provider_message, format_no_setup_message, format_restarting_message, format_scan_result_message, format_signal_review_message
 from app.telegram.webhook_manager import setup_public_webhook, stop_ngrok
 from app.utils.logger import setup_logging
 
@@ -133,6 +135,11 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)) -> d
             await bot.send_message(chat_id, format_access_denied_message())
             return {"ok": True}
         callback_data = callback.get("data", "")
+        if callback_data == "restart_confirm":
+            await bot.send_admin(format_restarting_message())
+            await asyncio.sleep(0.5)
+            perform_restart()
+            return {"ok": True}
         command = command_from_callback(callback_data)
         if command:
             reply, action = handle_command(db, command)
@@ -170,6 +177,8 @@ async def run_signal_review_and_notify(bot: TelegramBot, signal_id: int) -> None
 def keyboard_for_action(action: str | None) -> dict:
     if not action:
         return command_keyboard()
+    if action == "restart_prompt":
+        return {"inline_keyboard": [[{"text": "Yes, Restart", "callback_data": "restart_confirm"}, {"text": "Cancel", "callback_data": "cmd:help"}]]}
     if action.startswith("keyboard:"):
         parts = action.split(":")
         kind, page, total = parts[1], int(parts[2]), int(parts[3])
@@ -178,6 +187,10 @@ def keyboard_for_action(action: str | None) -> dict:
             return signal_list_keyboard(page, total, first_id)
         return pagination_keyboard(kind, page, total)
     return command_keyboard()
+
+
+def perform_restart() -> None:
+    os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
 def row_to_dict(row) -> dict:

@@ -554,6 +554,24 @@ Semua signal valid akan dikirim ke admin dulu untuk approval manual.
 <b>Action:</b> Admin harus klik Approve Broadcast."""
 
 
+def format_restart_confirm_message() -> str:
+    return f"""<b>⚠️ Restart Server</b>
+
+{SEP}
+Apakah kamu yakin ingin restart server?
+Semua scan yang sedang berjalan akan dibatalkan.
+Server akan restart otomatis setelah 1 detik.
+
+{SEP}
+Klik tombol di bawah untuk konfirmasi."""
+
+
+def format_restarting_message() -> str:
+    return f"""<b>🔄 Restarting...</b>
+
+Server sedang restart. Bot akan kembali online dalam beberapa detik."""
+
+
 def format_last_scan_message(scan_log: Any) -> str:
     if not scan_log:
         return format_error_message("No Scan Yet", "Belum ada scan tersimpan.", "Jalankan /scan_now untuk scan manual.")
