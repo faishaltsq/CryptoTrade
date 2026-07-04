@@ -494,6 +494,7 @@ def format_settings_message(settings: dict[str, Any]) -> str:
 <b>Commands</b>
 <code>/set_confidence 70</code>
 <code>/set_rr 2.0</code>
+<code>/set_interval 15</code>
 <code>/broadcast_on</code>
 <code>/broadcast_off</code>"""
 
