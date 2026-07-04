@@ -593,37 +593,40 @@ def format_diagnose_provider_message(result: list[dict[str, Any]]) -> str:
 {h(recommendation)}"""
 
 
+def _trim_reason(text: str, max_chars: int = 600) -> str:
+    if len(text) <= max_chars:
+        return text
+    cut = text[:max_chars].rsplit(".", 1)[0]
+    return (cut or text[:max_chars]) + "."
+
+
+def _trim_orderflow(of: dict[str, Any], signal: dict[str, Any]) -> str:
+    interp = str(of.get("flow_interpretation") or (signal.get("orderflow", {}) or {}).get("interpretation") or "")
+    if not interp:
+        return ""
+    if len(interp) > 240:
+        interp = interp[:240].rsplit(".", 1)[0] + "."
+    return interp
+
+
 def format_signal_candidate_admin_message(signal: dict[str, Any]) -> str:
     risk = signal.get("risk", {}) or {}
     market = signal.get("market_summary", {}) or {}
     of = signal.get("orderflow_summary") or signal.get("orderflow", {}) or {}
-    ai_of = signal.get("orderflow", {}) or {}
-    scores = signal.get("scores", {}) or {}
-    methods = signal.get("analysis_method_used", []) or []
     decision = signal.get("decision")
-    setup_label = signal.get("setup_type", "no_trade").replace("_", " ").title()
-    method_str = " | ".join(m.replace("_", " ").title() for m in methods) or "General Analysis"
     order_label = signal_order_label(signal)
     validity = format_signal_validity(signal)
     return f"""<b>{side_emoji(decision)} {h(signal.get('symbol'))} — {h(decision)} {h(order_label)}</b>
 
 {SEP}
-<b>Decision:</b> {h(decision)}
 <b>Confidence:</b> {h(signal.get('confidence'))}%
-<b>Market Regime:</b> {h(market.get('market_regime', 'unclear'))}
-<b>Provider:</b> {h(signal.get('provider', '-'))}
 <b>RR:</b> 1:{h(risk.get('risk_reward'))}
-
-{SEP}
-<b>Analysis Used:</b>
-{method_str}
+<b>Regime:</b> {h(market.get('market_regime', 'unclear'))}
+<b>Provider:</b> {h(signal.get('provider', '-'))}
 
 {SEP}
 <b>Market Context:</b>
-HTF Bias: {h(market.get('higher_timeframe_bias', 'neutral'))}
-LTF Context: {h(market.get('lower_timeframe_context', 'neutral'))}
-Main Reason:
-{h(market.get('main_reason', signal.get('reason', '')))}
+HTF: {h(market.get('higher_timeframe_bias', 'neutral'))} | LTF: {h(market.get('lower_timeframe_context', 'neutral'))}
 
 {SEP}
 <b>Trade Plan</b>
@@ -634,27 +637,16 @@ TP2: <code>{h(risk.get('take_profit_2'))}</code>
 {validity}
 
 {SEP}
-<b>Score</b>
-Technical: {h(scores.get('technical_score', 0))}/60
-Orderflow: {h(scores.get('orderflow_score', ai_of.get('score', 0)))}/25
-Risk: {h(scores.get('risk_score', 0))}/15
-Final: {h(scores.get('final_confidence', signal.get('confidence', 0)))}/100
-
-{SEP}
 <b>Reason</b>
-{h(signal.get('reason'))}
+{h(_trim_reason(signal.get('reason', '')))}
 
 {SEP}
 <b>Invalid If</b>
 {h(signal.get('invalid_if'))}
 
 {SEP}
-<b>Orderflow</b>
-Bias: {h(of.get('orderflow_bias', ai_of.get('bias', 'insufficient_data')))}
-Confirmation: {h(ai_of.get('confirmation', False))}
-Conflict: {h(ai_of.get('conflict', False))}
-Interpretation:
-{h(of.get('flow_interpretation', ai_of.get('interpretation', '')))}"""
+<b>Orderflow:</b> {h(of.get('orderflow_bias', '-'))} | confirm: {h('yes' if (signal.get('orderflow', {}) or {}).get('confirmation') else 'no')}
+{_trim_orderflow(of, signal)}"""
 
 
 def format_signal_broadcast_channel_message(signal: dict[str, Any]) -> str:
