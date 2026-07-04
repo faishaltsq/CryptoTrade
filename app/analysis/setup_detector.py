@@ -46,7 +46,7 @@ def detect_setup(symbol: str, candles: dict[str, pd.DataFrame], futures_data: di
     if abs(float(futures_data.get("funding_rate") or 0)) > 0.0015:
         return None, "extreme_volatility", tf
     higher = [tf["D1"]["trend"], tf["H4"]["trend"]]
-    if Counter(higher).get("ranging", 0) >= 2:
+    if Counter(higher).get("ranging", 0) >= 3:
         return None, "low_volatility", tf
     direction = candidate_direction(tf)
     if not direction:
@@ -72,9 +72,6 @@ def detect_setup(symbol: str, candles: dict[str, pd.DataFrame], futures_data: di
 def candidate_direction(tf: dict[str, dict[str, Any]]) -> str | None:
     bullish_htf = tf["H4"]["trend"] == "bullish" or (tf["D1"]["trend"] == "bullish" and tf["H4"]["trend"] != "bearish")
     bearish_htf = tf["H4"]["trend"] == "bearish" or (tf["D1"]["trend"] == "bearish" and tf["H4"]["trend"] != "bullish")
-    has_trigger = tf["M15"]["bos"] or tf["M15"]["choch"] or tf["H1"]["bos"] or tf["H1"]["choch"]
-    if not has_trigger:
-        return None
     if bullish_htf:
         return "BUY"
     if bearish_htf:
@@ -84,7 +81,7 @@ def candidate_direction(tf: dict[str, dict[str, Any]]) -> str | None:
 
 def reject_reason(tf: dict[str, dict[str, Any]]) -> str:
     trends = [tf[k]["trend"] for k in ["D1", "H4", "H1", "M15"]]
-    if Counter(trends).get("ranging", 0) >= 2:
+    if Counter(trends).get("ranging", 0) >= 3:
         return "low_volatility"
     if tf["D1"]["trend"] != "unclear" and tf["H4"]["trend"] != "unclear" and tf["D1"]["trend"] != tf["H4"]["trend"]:
         return "unclear_market_context"

@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     binance_futures_fallback_urls: str = Field(default="", alias="BINANCE_FUTURES_FALLBACK_URLS")
     auto_broadcast: bool = Field(default=True, alias="AUTO_BROADCAST")
     min_confidence: int = Field(default=65, alias="MIN_CONFIDENCE")
-    min_risk_reward: float = Field(default=2.0, alias="MIN_RISK_REWARD")
+    min_risk_reward: float = Field(default=1.5, alias="MIN_RISK_REWARD")
     max_pairs: int = Field(default=150, alias="MAX_PAIRS")
     scan_interval_minutes: int = Field(default=15, alias="SCAN_INTERVAL_MINUTES")
     database_url: str = Field(default="sqlite:///crypto_signal_bot.db", alias="DATABASE_URL")
