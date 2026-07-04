@@ -92,6 +92,7 @@ COMMAND_CALLBACKS = {
     "settings": "/settings",
     "broadcast_on": "/broadcast_on",
     "broadcast_off": "/broadcast_off",
+    "restart": "/restart",
     "last_scan": "/last_scan",
     "diagnose_market": "/diagnose_market",
     "orderflow_top": "/orderflow_top",
@@ -244,7 +245,7 @@ def handle_command(db: Session, text: str) -> tuple[str, str | None]:
         rows = repository.latest_rejected(db, 200)
         return format_waiting_message(rows, page), f"keyboard:waiting:{page}:{max(1, (len(rows) + 14) // 15)}"
     if cmd == "/settings":
-        return format_settings_message(settings.model_dump()), None
+        return format_settings_message(settings.model_dump()), "settings"
     if cmd == "/broadcast_on":
         repository.set_setting(db, "auto_broadcast", "true")
         return format_broadcast_on_message({"min_confidence": settings.min_confidence, "min_risk_reward": settings.min_risk_reward, "channel_enabled": bool(settings.telegram_channel_chat_id)}), None

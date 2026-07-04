@@ -179,6 +179,10 @@ def keyboard_for_action(action: str | None) -> dict:
         return command_keyboard()
     if action == "restart_prompt":
         return {"inline_keyboard": [[{"text": "Yes, Restart", "callback_data": "restart_confirm"}, {"text": "Cancel", "callback_data": "cmd:help"}]]}
+    if action == "settings":
+        buttons = command_keyboard().get("inline_keyboard", [])
+        buttons.append([{"text": "Restart Server", "callback_data": "cmd:restart"}])
+        return {"inline_keyboard": buttons}
     if action.startswith("keyboard:"):
         parts = action.split(":")
         kind, page, total = parts[1], int(parts[2]), int(parts[3])
