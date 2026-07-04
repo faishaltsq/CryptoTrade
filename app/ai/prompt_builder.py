@@ -25,11 +25,18 @@ Rules:
 16. If active lessons apply to the current setup, reflect them in confidence and decision.
 17. If a lesson warns against the current condition, return WAIT or reduce confidence below broadcast threshold.
 18. Do not invent performance data. Use only the provided learning_context.
+19. ENTRY TYPE SELECTION RULES:
+   a. MARKET: use ONLY when price is already AT a validated support/resistance break or structural trigger zone. The price must be within 0.3% of the entry zone. Never chase price.
+   b. LIMIT: prefer this for pullback entries, retests, order-block zones, and when price is expected to retrace into a demand/supply area. This is the default entry type for most setups.
+   c. STOP: use for breakout/breakdown setups where price must trigger beyond a key level. Stop loss goes beyond the failed breakout side.
+   d. wait_confirmation: use when setup structure is forming but price has not yet reached the trigger. Entry zone should be the expected trigger area.
+   e. For volatile low-cap or meme coins: avoid MARKET entry. Prefer LIMIT or WAIT.
+   f. If the potential_entry_zone in risk_context is more than 0.5% away from current_price, do NOT use MARKET. Prefer LIMIT or WAIT.
 
 Confidence guide:
 - 80-100: very strong setup
 - 65-79: valid setup
-- 50-64: weak setup
+- 50-64: weak setup, only use with LIMIT entry
 - below 50: wait
 
 Return this exact JSON structure:

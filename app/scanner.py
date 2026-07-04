@@ -79,7 +79,8 @@ class MarketScanner:
                 return {"status": "skipped", "summary": summary}
             if self.settings.enable_orderflow:
                 orderflow_aggregator.start(provider.name, [p["symbol"] for p in pairs[: self.settings.max_realtime_pairs]])
-            for pair in pairs:
+            signals_sent = 0
+        for pair in pairs:
                 symbol = pair["symbol"]
                 try:
                     candles = await self.get_multi_timeframe(provider, symbol)
@@ -155,6 +156,7 @@ class MarketScanner:
                             update_signal_status(db, row.id, row.status or "pending", "failed")
                             rejected_reasons.append("channel_broadcast_failed")
                     if ai_response.get("decision") in {"BUY", "SELL"}:
+                        signals_sent += 1
                         try:
                             await self.broadcaster.send_candidate_to_admin(row.id, ai_response)
                         except Exception:  # noqa: BLE001
@@ -171,7 +173,7 @@ class MarketScanner:
                 "provider": provider.name,
             }
             save_scan_log(db, len(pairs), candidates, valid_signals, len(rejected_reasons), summary)
-            if valid_signals == 0:
+            if signals_sent == 0:
                 await self.broadcaster.send_no_valid_setup(len(pairs), rejected_reasons, self.settings.scan_interval_minutes, rejected_details)
             return {"total_pairs": len(pairs), "candidates": candidates, "valid_signals": valid_signals, "rejected": len(rejected_reasons), "summary": summary}
         finally:
