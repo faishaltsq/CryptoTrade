@@ -202,6 +202,7 @@ def format_help_message() -> str:
 <code>/settings</code> — Lihat konfigurasi bot
 <code>/set_confidence 70</code> — Ubah minimum confidence
 <code>/set_rr 2.0</code> — Ubah minimum RR
+<code>/set_interval 15</code> — Ubah interval scan (menit)
 
 {SEP}
 <b>Catatan:</b>
@@ -515,6 +516,17 @@ def format_set_rr_message(old_value: Any, new_value: Any) -> str:
 <b>New:</b> 1:{h(new_value)}
 
 Signal hanya bisa broadcast jika RR minimal <b>1:{h(new_value)}</b>."""
+
+
+def format_set_interval_message(old_value: Any, new_value: Any) -> str:
+    return f"""<b>✅ Scan Interval Updated</b>
+
+{SEP}
+<b>Old:</b> {h(old_value)} menit
+<b>New:</b> {h(new_value)} menit
+
+Scan auto akan berjalan setiap <b>{h(new_value)} menit</b>.
+⚠️ Restart server agar interval baru diterapkan."""
 
 
 def format_broadcast_on_message(settings: dict[str, Any]) -> str:

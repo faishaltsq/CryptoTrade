@@ -25,6 +25,7 @@ from app.telegram.message_formatter import (
     format_pending_signals_message,
     format_set_confidence_message,
     format_set_rr_message,
+    format_set_interval_message,
     format_signal_detail_message,
     format_signal_review_message,
     format_signal_result_updated_message,
@@ -63,6 +64,7 @@ HELP_TEXT = """Commands:
 /settings
 /set_confidence <value>
 /set_rr <value>
+/set_interval <minutes>
 /broadcast_on
 /broadcast_off
 /last_scan
@@ -267,6 +269,16 @@ def handle_command(db: Session, text: str) -> tuple[str, str | None]:
         old = repository.get_setting(db, "min_risk_reward", str(settings.min_risk_reward))
         repository.set_setting(db, "min_risk_reward", parts[1])
         return format_set_rr_message(old, parts[1]), None
+    if cmd == "/set_interval" and len(parts) == 2:
+        try:
+            value = int(parts[1])
+            if value < 1:
+                raise ValueError
+        except ValueError:
+            return format_error_message("Invalid Interval Value", "Gunakan angka minimal 1 menit.", "Contoh: /set_interval 15"), None
+        old = repository.get_setting(db, "scan_interval_minutes", str(settings.scan_interval_minutes))
+        repository.set_setting(db, "scan_interval_minutes", parts[1])
+        return format_set_interval_message(old, parts[1]), None
     if cmd == "/last_scan":
         scan = repository.latest_scan(db)
         return format_last_scan_message(scan), None
