@@ -143,6 +143,7 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)) -> d
                 stop_ngrok()
             except Exception:
                 pass
+            _kill_port(8000)
             subprocess.Popen([sys.executable] + sys.argv, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0)
             os._exit(0)
             return {"ok": True}
@@ -197,6 +198,28 @@ def keyboard_for_action(action: str | None) -> dict:
             return signal_list_keyboard(page, total, first_id)
         return pagination_keyboard(kind, page, total)
     return command_keyboard()
+
+
+def _kill_port(port: int) -> None:
+    try:
+        import socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(1)
+        s.bind(("127.0.0.1", port))
+        s.close()
+    except OSError:
+        if sys.platform == "win32":
+            import signal
+            for proc in subprocess.check_output(["netstat", "-ano"], text=True).splitlines():
+                if f":{port}" in proc and "LISTENING" in proc:
+                    parts = proc.strip().split()
+                    pid = int(parts[-1])
+                    try:
+                        os.kill(pid, signal.SIGTERM)
+                    except Exception:
+                        pass
+        import time
+        time.sleep(1)
 
 
 def row_to_dict(row) -> dict:
