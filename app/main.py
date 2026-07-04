@@ -138,14 +138,12 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)) -> d
         callback_data = callback.get("data", "")
         if callback_data == "restart_confirm":
             await bot.send_admin(format_restarting_message())
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.3)
             try:
                 stop_ngrok()
             except Exception:
                 pass
-            _kill_port(8000)
-            subprocess.Popen([sys.executable] + sys.argv, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0)
-            os._exit(0)
+            _spawn_restarter()
             return {"ok": True}
         command = command_from_callback(callback_data)
         if command:
@@ -200,26 +198,26 @@ def keyboard_for_action(action: str | None) -> dict:
     return command_keyboard()
 
 
-def _kill_port(port: int) -> None:
-    try:
-        import socket
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(1)
-        s.bind(("127.0.0.1", port))
-        s.close()
-    except OSError:
-        if sys.platform == "win32":
-            import signal
-            for proc in subprocess.check_output(["netstat", "-ano"], text=True).splitlines():
-                if f":{port}" in proc and "LISTENING" in proc:
-                    parts = proc.strip().split()
-                    pid = int(parts[-1])
-                    try:
-                        os.kill(pid, signal.SIGTERM)
-                    except Exception:
-                        pass
-        import time
-        time.sleep(1)
+def _spawn_restarter() -> None:
+    import tempfile
+    wd = os.getcwd()
+    bat = tempfile.NamedTemporaryFile(mode="w", suffix=".bat", delete=False, encoding="utf-8")
+    bat.write(f"""@echo off
+timeout /t 3 /nobreak >nul
+:waitloop
+netstat -ano | findstr ":8000.*LISTENING" >nul
+if %errorlevel% equ 0 (
+    for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":8000.*LISTENING"') do (taskkill /F /PID %%p >nul 2>&1)
+    timeout /t 2 /nobreak >nul
+)
+cd /d {wd}
+call "{os.path.join(wd, '.venv', 'Scripts', 'activate.bat')}" >nul 2>&1
+python run.py
+del "%~f0"
+""")
+    bat_name = bat.name
+    bat.close()
+    subprocess.Popen(["cmd", "/c", bat_name], creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS if sys.platform == "win32" else 0)
 
 
 def row_to_dict(row) -> dict:
