@@ -415,7 +415,7 @@ BUY: {decisions.get('BUY', 0)} | SELL: {decisions.get('SELL', 0)}
 {SEP}
 <b>Validation</b>
 Valid: {validations.get('valid', 0)}
-Rejected: {validations.get('rejected', 0)}
+Warning: {validations.get('warning', 0)}
 Unknown: {validations.get('-', 0)}
 
 <b>Broadcast</b>
@@ -438,7 +438,7 @@ Expired: {outcomes.get('expired', 0)}
 
 def signal_validation_status(row: Any) -> str:
     data = parse_json(getattr(row, "ai_response_json", "{}"), {}) or {}
-    return data.get("validation_status") or ("rejected" if getattr(row, "status", "") == "rejected" else "valid" if getattr(row, "broadcast_status", "") == "broadcasted" else "-")
+    return data.get("validation_status") or ("warning" if getattr(row, "status", "") == "warning" else "valid" if getattr(row, "broadcast_status", "") == "broadcasted" else "-")
 
 
 def format_waiting_message(waiting_items: list[Any], page: int = 1, per_page: int = 15) -> str:

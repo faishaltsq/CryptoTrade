@@ -135,12 +135,12 @@ class MarketScanner:
                         logger.warning("AI response issue symbol=%s error=%s", symbol, ai_error)
                     _recalculate_tp1_risk_reward(ai_response)
                     ok, validation_reason = validate_for_broadcast(ai_response)
-                    ai_response["validation_status"] = "valid" if ok else "rejected"
+                    ai_response["validation_status"] = "valid" if ok else "warning"
                     ai_response["validation_reason"] = validation_reason
                     broadcast_enabled = auto_broadcast_enabled(db, self.settings.auto_broadcast)
                     should_publish = ai_response.get("decision") in {"BUY", "SELL"}
                     broadcast_status = "pending_admin" if should_publish else "skipped"
-                    row = save_signal_log(db, candidate, ai_response, status="pending" if ok else "rejected", broadcast_status=broadcast_status)
+                    row = save_signal_log(db, candidate, ai_response, status="pending" if ok else "warning", broadcast_status=broadcast_status)
                     ai_response["signal_id"] = row.id
                     if ok:
                         valid_signals += 1
@@ -149,10 +149,10 @@ class MarketScanner:
                     if should_publish and broadcast_enabled:
                         try:
                             await self.broadcaster.broadcast_channel(ai_response)
-                            update_signal_status(db, row.id, "broadcasted" if ok else "rejected", "broadcasted")
+                            update_signal_status(db, row.id, "broadcasted", "broadcasted")
                         except Exception as exc:  # noqa: BLE001
                             logger.exception("Channel broadcast failed signal_id=%s symbol=%s", row.id, symbol)
-                            update_signal_status(db, row.id, "pending" if ok else "rejected", "failed")
+                            update_signal_status(db, row.id, row.status or "pending", "failed")
                             rejected_reasons.append("channel_broadcast_failed")
                     if ai_response.get("decision") in {"BUY", "SELL"}:
                         try:
