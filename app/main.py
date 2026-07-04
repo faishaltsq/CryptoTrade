@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import subprocess
 import sys
 from fastapi import Depends, FastAPI, Request
 from sqlalchemy.orm import Session
@@ -137,8 +138,13 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)) -> d
         callback_data = callback.get("data", "")
         if callback_data == "restart_confirm":
             await bot.send_admin(format_restarting_message())
-            loop = asyncio.get_event_loop()
-            loop.call_later(3, perform_restart)
+            await asyncio.sleep(0.5)
+            try:
+                stop_ngrok()
+            except Exception:
+                pass
+            subprocess.Popen([sys.executable] + sys.argv, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0)
+            os._exit(0)
             return {"ok": True}
         command = command_from_callback(callback_data)
         if command:
@@ -191,14 +197,6 @@ def keyboard_for_action(action: str | None) -> dict:
             return signal_list_keyboard(page, total, first_id)
         return pagination_keyboard(kind, page, total)
     return command_keyboard()
-
-
-def perform_restart() -> None:
-    try:
-        stop_ngrok()
-    except Exception:
-        pass
-    os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
 def row_to_dict(row) -> dict:
