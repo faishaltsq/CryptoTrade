@@ -201,18 +201,17 @@ def keyboard_for_action(action: str | None) -> dict:
 def _spawn_restarter() -> None:
     import tempfile
     wd = os.getcwd()
+    py = sys.executable
     bat = tempfile.NamedTemporaryFile(mode="w", suffix=".bat", delete=False, encoding="utf-8")
     bat.write(f"""@echo off
 timeout /t 3 /nobreak >nul
-:waitloop
 netstat -ano | findstr ":8000.*LISTENING" >nul
 if %errorlevel% equ 0 (
     for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":8000.*LISTENING"') do (taskkill /F /PID %%p >nul 2>&1)
     timeout /t 2 /nobreak >nul
 )
 cd /d {wd}
-call "{os.path.join(wd, '.venv', 'Scripts', 'activate.bat')}" >nul 2>&1
-python run.py
+"{py}" run.py
 del "%~f0"
 """)
     bat_name = bat.name
