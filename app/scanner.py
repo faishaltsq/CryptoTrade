@@ -80,7 +80,7 @@ class MarketScanner:
             if self.settings.enable_orderflow:
                 orderflow_aggregator.start(provider.name, [p["symbol"] for p in pairs[: self.settings.max_realtime_pairs]])
             signals_sent = 0
-        for pair in pairs:
+            for pair in pairs:
                 symbol = pair["symbol"]
                 try:
                     candles = await self.get_multi_timeframe(provider, symbol)
