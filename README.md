@@ -22,9 +22,18 @@ The project does not place trades. It does not use private exchange APIs, tradin
 - DeepSeek strict JSON validation.
 - Telegram admin approval flow with inline buttons.
 - Telegram channel broadcast after approval.
+- Signal outcome tracking with auto-resolve and performance analytics.
+- Signal learning loop: adaptive scoring, post-trade review, strategy lessons.
+- Daily signal recap at 21:00 WIB.
+- TP1-based risk-reward recalculation from geometric distance.
+- Compact single-message signal format (no split chunks).
+- 5 signals per page with Prev/Next navigation.
+- Validation warnings instead of blocking rejected signals.
+- `/restart` command with confirm button + ngrok cleanup.
+- Telegram retry with exponential backoff + 429 cooldown.
 - SQLite MVP database with SQLAlchemy models.
 - FastAPI API and Swagger docs.
-- APScheduler scheduled scans.
+- APScheduler scheduled scans with runtime interval changes.
 
 ## Safety Rules
 
@@ -419,23 +428,40 @@ PUBLIC_BASE_URL=https://your-domain.com
 
 Admin-only commands:
 
-- `/start`
-- `/status`
-- `/scan_now`
-- `/pairs`
-- `/top_volume`
-- `/signals`
-- `/waiting`
-- `/settings`
-- `/set_confidence <value>`
-- `/set_rr <value>`
-- `/broadcast_on`
-- `/broadcast_off`
-- `/last_scan`
-- `/diagnose_market`
-- `/help`
+- `/start` — Start + auto broadcast enable
+- `/status` — Live server state
+- `/scan_now` — Manual market scan
+- `/pairs` — Pair list (20/page)
+- `/top_volume` — Highest volume pairs (15/page)
+- `/signals` — Recent signals (5/page with Prev/Next)
+- `/signal_detail ID` — Full signal detail
+- `/signal_result ID RESULT` — Set outcome (hit_tp1, hit_tp2, hit_sl, expired, cancelled)
+- `/signal_recap` — Today signal summary
+- `/pending_signals` — Pending outcome signals
+- `/outcomes` — Recent resolved outcomes
+- `/performance` — Winrate, per-symbol stats
+- `/waiting` — Rejected/Warning candidate list
+- `/settings` — Config overview + Restart button
+- `/set_confidence 70` — Min confidence
+- `/set_rr 2.0` — Min risk-reward
+- `/set_interval 15` — Scan interval (minutes, needs restart)
+- `/broadcast_on` — Enable auto channel broadcast
+- `/broadcast_off` — Manual approval mode
+- `/restart` — Confirm restart server
+- `/last_scan` — Last scan result
+- `/diagnose_market` — Provider connectivity test
+- `/orderflow SYMBOL` — Orderflow summary
+- `/orderflow_top` — Top orderflow activity
+- `/lessons` — Strategy lessons list
+- `/lesson_detail ID` — Lesson detail
+- `/approve_lesson ID` — Approve suggested lesson
+- `/reject_lesson ID` — Reject lesson
+- `/disable_lesson ID` — Disable active lesson
+- `/review_signal ID` — Trigger signal review
+- `/learning_status` — Learning loop status
+- `/help` — Command list
 
-The bot also sends an inline keyboard menu for the main commands.
+The bot also sends an inline keyboard menu.
 
 ## Telegram Message Formatting
 
@@ -446,7 +472,7 @@ The bot also sends an inline keyboard menu for the main commands.
 - Formatter terpusat di `app/telegram/message_formatter.py`.
 - `/pairs` menampilkan 20 item per halaman.
 - `/top_volume` menampilkan 15 item per halaman.
-- `/signals` menampilkan 10 item per halaman.
+- `/signals` menampilkan 5 item per halaman.
 - `/waiting` menampilkan 15 item per halaman.
 - Inline keyboard tersedia untuk Prev, Next, Refresh, menu command, dan action signal.
 
