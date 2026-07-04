@@ -157,8 +157,10 @@ def handle_command(db: Session, text: str) -> tuple[str, str | None]:
         auto = repository.get_setting(db, "auto_broadcast", str(settings.auto_broadcast))
         min_conf = repository.get_setting(db, "min_confidence", str(settings.min_confidence))
         min_rr = repository.get_setting(db, "min_risk_reward", str(settings.min_risk_reward))
+        db_interval = repository.get_setting(db, "scan_interval_minutes", "")
+        interval = int(db_interval) if db_interval and db_interval.isdigit() else settings.scan_interval_minutes
         summary = json.loads(scan.summary_json) if scan else {}
-        return format_status_message({"market_provider": settings.market_provider, "fallback_provider": settings.fallback_market_provider, "enable_orderflow": settings.enable_orderflow, "auto_broadcast": auto, "max_pairs": settings.max_pairs, "max_realtime_pairs": settings.max_realtime_pairs, "max_depth_pairs": settings.max_depth_pairs, "scan_interval_minutes": settings.scan_interval_minutes, "last_scan_time": scan.timestamp if scan else None, "min_confidence": min_conf, "min_risk_reward": min_rr, "total_scanned": getattr(scan, "total_pairs", 0) if scan else 0, "candidate_count": getattr(scan, "candidates_count", 0) if scan else 0, "valid_signal_count": getattr(scan, "valid_signals_count", 0) if scan else 0, "rejected_count": getattr(scan, "rejected_count", 0) if scan else 0, "provider": summary.get("provider")}), None
+        return format_status_message({"market_provider": settings.market_provider, "fallback_provider": settings.fallback_market_provider, "enable_orderflow": settings.enable_orderflow, "auto_broadcast": auto, "max_pairs": settings.max_pairs, "max_realtime_pairs": settings.max_realtime_pairs, "max_depth_pairs": settings.max_depth_pairs, "scan_interval_minutes": interval, "last_scan_time": scan.timestamp if scan else None, "min_confidence": min_conf, "min_risk_reward": min_rr, "total_scanned": getattr(scan, "total_pairs", 0) if scan else 0, "candidate_count": getattr(scan, "candidates_count", 0) if scan else 0, "valid_signal_count": getattr(scan, "valid_signals_count", 0) if scan else 0, "rejected_count": getattr(scan, "rejected_count", 0) if scan else 0, "provider": summary.get("provider")}), None
     if cmd == "/scan_now":
         return "<b>🔎 Manual Scan Started</b>\n\nBot sedang scan market sekarang. Hasil akan dikirim setelah scan selesai.", "scan_now"
     if cmd == "/pairs":
@@ -245,7 +247,11 @@ def handle_command(db: Session, text: str) -> tuple[str, str | None]:
         rows = repository.latest_rejected(db, 200)
         return format_waiting_message(rows, page), f"keyboard:waiting:{page}:{max(1, (len(rows) + 14) // 15)}"
     if cmd == "/settings":
-        return format_settings_message(settings.model_dump()), "settings"
+        db_interval = repository.get_setting(db, "scan_interval_minutes", "")
+        s = settings.model_dump()
+        if db_interval and db_interval.isdigit():
+            s["scan_interval_minutes"] = int(db_interval)
+        return format_settings_message(s), "settings"
     if cmd == "/broadcast_on":
         repository.set_setting(db, "auto_broadcast", "true")
         return format_broadcast_on_message({"min_confidence": settings.min_confidence, "min_risk_reward": settings.min_risk_reward, "channel_enabled": bool(settings.telegram_channel_chat_id)}), None
