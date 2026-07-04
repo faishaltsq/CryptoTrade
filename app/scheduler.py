@@ -82,11 +82,17 @@ async def run_auto_review() -> dict:
 
 def start_scheduler() -> None:
     settings = get_settings()
+    db = SessionLocal()
+    try:
+        db_interval = repository.get_setting(db, "scan_interval_minutes", "")
+        interval = int(db_interval) if db_interval and db_interval.isdigit() and int(db_interval) >= 1 else settings.scan_interval_minutes
+    finally:
+        db.close()
     if not scheduler.running:
-        scheduler.add_job(scan_job, "interval", minutes=settings.scan_interval_minutes, id="market_scan", replace_existing=True, next_run_time=datetime.now(timezone.utc))
+        scheduler.add_job(scan_job, "interval", minutes=interval, id="market_scan", replace_existing=True, next_run_time=datetime.now(timezone.utc))
         scheduler.add_job(daily_signal_recap_job, "cron", hour=21, minute=0, timezone=ZoneInfo("Asia/Jakarta"), id="daily_signal_recap", replace_existing=True)
         scheduler.start()
-        logger.info("Scheduler started interval=%s minutes", settings.scan_interval_minutes)
+        logger.info("Scheduler started interval=%s minutes", interval)
 
 
 async def daily_signal_recap_job() -> None:
