@@ -25,3 +25,19 @@ def calculate_plan(direction: str, price: float, atr: float, support: float, res
         "take_profit_2": f"{tp2:.6g}",
         "risk_reward": round(float(rr), 2),
     }
+
+
+def actual_tp1_risk_reward(decision: str, entry: float, sl: float, tp1: float) -> float:
+    if entry <= 0 or sl <= 0 or tp1 <= 0:
+        return 0.0
+    if decision == "BUY":
+        risk = max(entry - sl, 0.00000001)
+        reward = max(tp1 - entry, 0)
+    elif decision == "SELL":
+        risk = max(sl - entry, 0.00000001)
+        reward = max(entry - tp1, 0)
+    else:
+        return 0.0
+    if risk == 0:
+        return 0.0
+    return round(reward / risk, 2)

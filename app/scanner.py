@@ -4,6 +4,7 @@ from typing import Any
 import pandas as pd
 from app.ai.deepseek_client import DeepSeekClient
 from app.analysis.setup_detector import detect_setup
+from app.analysis.risk_reward import actual_tp1_risk_reward
 from app.config import get_settings
 from app.database.repository import get_setting, save_orderflow_snapshot, save_rejected_setup, save_scan_log, save_signal_log, update_signal_status
 from app.database.session import SessionLocal
@@ -20,6 +21,38 @@ from app.signal.validator import validate_for_broadcast
 
 
 logger = logging.getLogger(__name__)
+
+
+def _to_float(value) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _parse_price_range(value: str) -> float:
+    if not value:
+        return 0.0
+    parts = str(value).replace(",", "").split("-")
+    numbers = [_to_float(p.strip()) for p in parts if p.strip()]
+    return numbers[0] if numbers else 0.0
+
+
+def _recalculate_tp1_risk_reward(ai_response: dict) -> float:
+    decision = str(ai_response.get("decision", "")).upper()
+    risk_data = ai_response.get("risk") or {}
+    entry_raw = risk_data.get("entry_zone") or ai_response.get("entry") or ""
+    sl_raw = risk_data.get("stop_loss") or ai_response.get("stop_loss") or ""
+    tp1_raw = risk_data.get("take_profit_1") or ai_response.get("take_profit_1") or ""
+    entry = _parse_price_range(entry_raw)
+    sl = _to_float(sl_raw)
+    tp1 = _to_float(tp1_raw)
+    calculated = actual_tp1_risk_reward(decision, entry, sl, tp1)
+    if calculated <= 0:
+        return float(risk_data.get("risk_reward") or 0)
+    risk_data["risk_reward"] = calculated
+    ai_response["risk"] = risk_data
+    return calculated
 
 
 class MarketScanner:
@@ -100,6 +133,7 @@ class MarketScanner:
                     ai_response["orderflow_summary"] = candidate.get("orderflow", {})
                     if ai_error:
                         logger.warning("AI response issue symbol=%s error=%s", symbol, ai_error)
+                    _recalculate_tp1_risk_reward(ai_response)
                     ok, validation_reason = validate_for_broadcast(ai_response)
                     ai_response["validation_status"] = "valid" if ok else "rejected"
                     ai_response["validation_reason"] = validation_reason
