@@ -28,8 +28,24 @@ class TelegramBot:
     async def send_channel(self, text: str) -> None:
         if not (self.settings.telegram_bot_token and self.settings.telegram_channel_chat_id):
             logger.warning("Telegram channel send skipped: missing token or channel chat id")
-            return
-        await self.send_message(self.settings.telegram_channel_chat_id, text)
+            return None
+        return await self.send_message(self.settings.telegram_channel_chat_id, text)
+
+    async def pin_chat_message(self, chat_id: str, message_id: int) -> bool:
+        try:
+            await self._send_with_retry({"chat_id": chat_id, "message_id": message_id}, "pinChatMessage")
+            return True
+        except Exception:
+            logger.warning("Failed to pin message_id=%s in chat_id=%s", message_id, chat_id)
+            return False
+
+    async def unpin_chat_message(self, chat_id: str, message_id: int) -> bool:
+        try:
+            await self._send_with_retry({"chat_id": chat_id, "message_id": message_id}, "unpinChatMessage")
+            return True
+        except Exception:
+            logger.warning("Failed to unpin message_id=%s in chat_id=%s", message_id, chat_id)
+            return False
 
     async def _rate_limit_wait(self) -> None:
         import time
@@ -37,15 +53,21 @@ class TelegramBot:
         if elapsed < _MESSAGE_COOLDOWN:
             await asyncio.sleep(_MESSAGE_COOLDOWN - elapsed)
 
-    async def send_message(self, chat_id: str, text: str, reply_markup: dict[str, Any] | None = None) -> None:
+    async def send_message(self, chat_id: str, text: str, reply_markup: dict[str, Any] | None = None) -> list[int]:
         chunks = split_long_message(text)
+        message_ids: list[int] = []
         for idx, chunk in enumerate(chunks):
             payload: dict[str, Any] = {"chat_id": chat_id, "text": chunk, "parse_mode": "HTML", "disable_web_page_preview": True}
             if reply_markup and idx == 0:
                 payload["reply_markup"] = reply_markup
-            await self._send_with_retry(payload)
+            result = await self._send_with_retry(payload)
+            if result and isinstance(result, dict):
+                mid = result.get("result", {}).get("message_id")
+                if isinstance(mid, int):
+                    message_ids.append(mid)
+        return message_ids
 
-    async def _send_with_retry(self, payload: dict[str, Any]) -> None:
+    async def _send_with_retry(self, payload: dict[str, Any], method: str = "sendMessage") -> dict[str, Any]:
         last_error = None
         for attempt, delay in enumerate([0.0] + list(_RETRY_DELAYS)):
             if attempt > 0:
@@ -54,7 +76,7 @@ class TelegramBot:
             try:
                 await self._rate_limit_wait()
                 async with httpx.AsyncClient(timeout=15) as client:
-                    response = await client.post(f"{self.base_url}/sendMessage", json=payload)
+                    response = await client.post(f"{self.base_url}/{method}", json=payload)
                     import time
                     self._last_send_time = time.monotonic()
                     if response.status_code == 429:
@@ -63,7 +85,7 @@ class TelegramBot:
                         await asyncio.sleep(retry_after)
                         continue
                     response.raise_for_status()
-                    return
+                    return response.json()
             except (httpx.TimeoutException, httpx.ConnectError, httpx.RemoteProtocolError) as exc:
                 last_error = str(exc)
             except httpx.HTTPStatusError as exc:

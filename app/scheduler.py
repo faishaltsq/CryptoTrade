@@ -46,12 +46,33 @@ async def run_scan_now() -> dict:
 async def scan_job() -> None:
     try:
         await run_outcome_tracker()
+        await unpin_resolved()
         await run_auto_review()
         await run_scan_now()
         await run_outcome_tracker()
+        await unpin_resolved()
         await run_auto_review()
     except Exception:  # noqa: BLE001
         logger.exception("Scheduled scan failed")
+
+
+async def unpin_resolved() -> None:
+    db = SessionLocal()
+    try:
+        from app.signal.broadcaster import SignalBroadcaster
+
+        bot = SignalBroadcaster()
+        outcomes = repository.get_outcomes_by_result(db, ["hit_sl", "expired"], 20)
+        for outcome in outcomes:
+            msg_id = repository.get_setting(db, f"pin_msg:{outcome.signal_id}", "")
+            if msg_id and msg_id.isdigit():
+                await bot.unpin_channel(int(msg_id))
+                repository.delete_setting(db, f"pin_msg:{outcome.signal_id}")
+                logger.info("Unpinned signal #%s msg_id=%s", outcome.signal_id, msg_id)
+    except Exception:
+        logger.exception("Unpin resolved failed")
+    finally:
+        db.close()
 
 
 async def run_outcome_tracker() -> dict:

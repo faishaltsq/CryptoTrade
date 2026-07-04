@@ -156,8 +156,11 @@ class MarketScanner:
                             update_signal_status(db, row.id, row.status or "pending", "admin_failed")
                     if should_publish and broadcast_enabled:
                         try:
-                            await self.broadcaster.broadcast_channel(ai_response)
+                            msg_id = await self.broadcaster.broadcast_channel(ai_response)
                             update_signal_status(db, row.id, "broadcasted", "broadcasted")
+                            if msg_id:
+                                repository.set_setting(db, f"pin_msg:{row.id}", str(msg_id))
+                                await self.broadcaster.pin_channel(msg_id)
                         except Exception as exc:  # noqa: BLE001
                             logger.exception("Channel broadcast failed signal_id=%s symbol=%s", row.id, symbol)
                             update_signal_status(db, row.id, row.status or "pending", "failed")

@@ -232,8 +232,15 @@ def get_recent_outcomes(db: Session, limit: int = 10) -> list[SignalOutcome]:
     return db.query(SignalOutcome).order_by(desc(SignalOutcome.updated_at)).limit(limit).all()
 
 
-def get_closed_unreviewed_signals(db: Session, limit: int = 20) -> list[SignalLog]:
-    return db.query(SignalLog).filter(SignalLog.outcome_status.in_(list(FINAL_OUTCOMES)), SignalLog.review_status.in_(["not_reviewed", "failed"])).order_by(desc(SignalLog.updated_at)).limit(limit).all()
+def get_outcomes_by_result(db: Session, results: list[str], limit: int = 20) -> list[SignalOutcome]:
+    return db.query(SignalOutcome).filter(SignalOutcome.result.in_(results)).order_by(desc(SignalOutcome.updated_at)).limit(limit).all()
+
+
+def delete_setting(db: Session, key: str) -> None:
+    row = db.query(Setting).filter(Setting.key == key).first()
+    if row:
+        db.delete(row)
+        db.commit()
 
 
 def update_signal_outcome(db: Session, signal_id: int, result: str, close_reason: str | None = None, close_price: float | None = None) -> SignalOutcome | None:
