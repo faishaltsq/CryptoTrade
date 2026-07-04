@@ -161,6 +161,7 @@ class MarketScanner:
                             await self.broadcaster.send_candidate_to_admin(row.id, ai_response)
                         except Exception:  # noqa: BLE001
                             logger.exception("Admin signal notification failed signal_id=%s symbol=%s", row.id, symbol)
+                            update_signal_status(db, row.id, row.status or "pending", "admin_failed")
                 except Exception as exc:  # noqa: BLE001
                     logger.exception("Scan failed for symbol=%s", symbol)
                     rejected_reasons.append("scanner error")

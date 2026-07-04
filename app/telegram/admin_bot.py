@@ -22,8 +22,7 @@ class TelegramBot:
 
     async def send_admin(self, text: str, reply_markup: dict[str, Any] | None = None) -> None:
         if not self.enabled():
-            logger.warning("Telegram admin send skipped: missing token or admin chat id")
-            return
+            raise RuntimeError("Telegram admin not configured: missing TELEGRAM_BOT_TOKEN or TELEGRAM_ADMIN_CHAT_ID")
         await self.send_message(self.settings.telegram_admin_chat_id, text, reply_markup)
 
     async def send_channel(self, text: str) -> None:
