@@ -160,7 +160,8 @@ class MarketScanner:
                             update_signal_status(db, row.id, "broadcasted", "broadcasted")
                             if msg_id:
                                 repository.set_setting(db, f"pin_msg:{row.id}", str(msg_id))
-                                await self.broadcaster.pin_channel(msg_id)
+                                pinned = await self.broadcaster.pin_channel(msg_id)
+                                logger.info("Signal #%d pinned=%s msg_id=%s symbol=%s", row.id, pinned, msg_id, symbol)
                         except Exception as exc:  # noqa: BLE001
                             logger.exception("Channel broadcast failed signal_id=%s symbol=%s", row.id, symbol)
                             update_signal_status(db, row.id, row.status or "pending", "failed")
