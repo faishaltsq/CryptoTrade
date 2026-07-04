@@ -10,7 +10,7 @@ from app.database.models import SignalLog, SignalOutcome
 
 
 def analyze_performance(db: Session, period: str = "30d") -> dict[str, Any]:
-    query = db.query(SignalOutcome, SignalLog).join(SignalLog, SignalLog.id == SignalOutcome.signal_id).filter(SignalLog.broadcast_status == "broadcasted")
+    query = db.query(SignalOutcome, SignalLog).join(SignalLog, SignalLog.id == SignalOutcome.signal_id)
     if period != "all":
         days = int(period[:-1]) if period.endswith("d") and period[:-1].isdigit() else 30
         query = query.filter(SignalOutcome.created_at >= datetime.now(timezone.utc) - timedelta(days=days))
