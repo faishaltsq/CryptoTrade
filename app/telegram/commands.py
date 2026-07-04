@@ -173,7 +173,7 @@ def handle_command(db: Session, text: str) -> tuple[str, str | None]:
     if cmd == "/signals":
         rows = repository.get_recent_signals(db, 100)
         attach_signal_market_state(db, rows)
-        return format_signals_message(rows, page), f"keyboard:signals:{page}:{max(1, (len(rows) + 9) // 10)}:{rows[0].id if rows else ''}"
+        return format_signals_message(rows, page), f"keyboard:signals:{page}:{max(1, (len(rows) + 4) // 5)}:{rows[0].id if rows else ''}"
     if cmd == "/signal_recap":
         start, end, label = today_wib_range()
         return format_daily_signal_recap_message(repository.get_signals_between(db, start, end), label), None

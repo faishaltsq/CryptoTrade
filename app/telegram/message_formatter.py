@@ -365,7 +365,7 @@ def format_top_volume_message(pairs: list[dict[str, Any]], page: int = 1, per_pa
 <b>Filter:</b> USDT perpetual, active/trading only."""
 
 
-def format_signals_message(signals: list[Any], page: int = 1, per_page: int = 10) -> str:
+def format_signals_message(signals: list[Any], page: int = 1, per_page: int = 5) -> str:
     if not signals:
         return f"""<b>⚪ No Signals Yet</b>
 
