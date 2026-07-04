@@ -137,8 +137,8 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)) -> d
         callback_data = callback.get("data", "")
         if callback_data == "restart_confirm":
             await bot.send_admin(format_restarting_message())
-            await asyncio.sleep(0.5)
-            perform_restart()
+            loop = asyncio.get_event_loop()
+            loop.call_later(3, perform_restart)
             return {"ok": True}
         command = command_from_callback(callback_data)
         if command:
@@ -194,6 +194,10 @@ def keyboard_for_action(action: str | None) -> dict:
 
 
 def perform_restart() -> None:
+    try:
+        stop_ngrok()
+    except Exception:
+        pass
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
