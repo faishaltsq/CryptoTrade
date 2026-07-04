@@ -6,7 +6,7 @@ from app.ai.deepseek_client import DeepSeekClient
 from app.analysis.setup_detector import detect_setup
 from app.analysis.risk_reward import actual_tp1_risk_reward
 from app.config import get_settings
-from app.database.repository import get_setting, save_orderflow_snapshot, save_rejected_setup, save_scan_log, save_signal_log, update_signal_status
+from app.database.repository import get_setting, save_orderflow_snapshot, save_rejected_setup, save_scan_log, save_signal_log, set_setting, update_signal_status
 from app.database.session import SessionLocal
 from app.learning.adaptive_scoring import apply_adaptive_scoring
 from app.learning.learning_prompt_builder import learning_context
@@ -159,7 +159,7 @@ class MarketScanner:
                             msg_id = await self.broadcaster.broadcast_channel(ai_response)
                             update_signal_status(db, row.id, "broadcasted", "broadcasted")
                             if msg_id:
-                                repository.set_setting(db, f"pin_msg:{row.id}", str(msg_id))
+                                set_setting(db, f"pin_msg:{row.id}", str(msg_id))
                                 pinned = await self.broadcaster.pin_channel(msg_id)
                                 logger.info("Signal #%d pinned=%s msg_id=%s symbol=%s", row.id, pinned, msg_id, symbol)
                         except Exception as exc:  # noqa: BLE001
