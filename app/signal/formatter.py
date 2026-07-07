@@ -20,6 +20,8 @@ def signal_footer(ai: dict, signal_id: int | None = None) -> str:
     suffix = f"\n\nSignal ID: <code>{signal_id}</code>" if signal_id else ""
     if validation == "warning":
         suffix += f"\n⚠️ Note: <code>{reason}</code>"
+        if signal_id:
+            suffix += f"\n/nudge {signal_id} approve | /nudge {signal_id} reject"
     elif validation:
         suffix += f"\nValidation: <b>{validation}</b>"
         if reason and reason != "valid":

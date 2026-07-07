@@ -36,12 +36,26 @@ async def track_pending_outcomes(db: Session) -> dict[str, Any]:
         if price > 0:
             update_excursions(db, signal, outcome, price)
             result = detect_result(signal.decision, price, outcome.stop_loss, outcome.take_profit_1, outcome.take_profit_2)
+            if not result:
+                result = await detect_result_from_candles(signal, outcome)
             if result:
                 apply_outcome(db, signal.id, result, price)
                 updated += 1
                 continue
+            if market_window_expired(signal, price):
+                candle_result = await detect_result_from_candles(signal, outcome)
+                if candle_result:
+                    apply_outcome(db, signal.id, candle_result, price)
+                else:
+                    apply_outcome(db, signal.id, "expired", price)
+                updated += 1
+                continue
         if expired(signal):
-            apply_outcome(db, signal.id, "expired", price)
+            candle_result = await detect_result_from_candles(signal, outcome)
+            if candle_result:
+                apply_outcome(db, signal.id, candle_result, price)
+            else:
+                apply_outcome(db, signal.id, "expired", price)
             updated += 1
     return {"status": "completed", "checked": checked, "updated": updated}
 
@@ -58,6 +72,82 @@ async def current_price(symbol: str) -> float:
             pass
         finally:
             await provider.close()
+    return 0.0
+
+
+async def _fetch_recent_klines(symbol: str, since: datetime) -> list[dict[str, Any]]:
+    for name in configured_provider_names():
+        provider = create_provider(name)
+        try:
+            raw = await provider.get_klines(symbol, "15m", limit=50)
+            klines = []
+            for row in raw:
+                ts = _kline_timestamp(row)
+                if ts and ts >= since:
+                    klines.append(row)
+            return klines
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            await provider.close()
+    return []
+
+
+def _kline_timestamp(row: dict[str, Any]) -> datetime | None:
+    ts_ms = row.get("open_time") or row.get("t") or row.get("ts") or 0
+    try:
+        ts_s = float(ts_ms)
+        if ts_s > 10_000_000_000:
+            ts_s /= 1000
+        return datetime.fromtimestamp(ts_s, tz=timezone.utc)
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+async def detect_result_from_candles(signal: Any, outcome: Any) -> str | None:
+    if not signal.timestamp:
+        return None
+    ts = signal.timestamp
+    if not ts.tzinfo:
+        ts = ts.replace(tzinfo=timezone.utc)
+    klines = await _fetch_recent_klines(signal.symbol, ts)
+    if not klines:
+        return None
+    decision = str(signal.decision or "").upper()
+    sl = float(outcome.stop_loss or 0)
+    tp1 = float(outcome.take_profit_1 or 0)
+    tp2 = float(outcome.take_profit_2 or 0)
+    if decision == "BUY":
+        for row in klines:
+            high = _parse_ohlc(row, "high")
+            low = _parse_ohlc(row, "low")
+            if sl and low <= sl:
+                return "hit_sl"
+            if tp2 and high >= tp2:
+                return "hit_tp2"
+            if tp1 and high >= tp1:
+                return "hit_tp1"
+    elif decision == "SELL":
+        for row in klines:
+            high = _parse_ohlc(row, "high")
+            low = _parse_ohlc(row, "low")
+            if sl and high >= sl:
+                return "hit_sl"
+            if tp2 and low <= tp2:
+                return "hit_tp2"
+            if tp1 and low <= tp1:
+                return "hit_tp1"
+    return None
+
+
+def _parse_ohlc(row: dict[str, Any], field: str) -> float:
+    for key in (field, field[0], field.upper(), field.capitalize()):
+        val = row.get(key)
+        if val is not None:
+            try:
+                return float(val)
+            except (TypeError, ValueError):
+                pass
     return 0.0
 
 
@@ -112,6 +202,27 @@ def apply_outcome(db: Session, signal_id: int, result: str, close_price: float =
         outcome.expired_at = now
     db.add(outcome)
     db.commit()
+
+
+def market_window_expired(signal: Any, price: float) -> bool:
+    settings = get_settings()
+    timestamp = signal.timestamp
+    if not timestamp or price <= 0:
+        return False
+    if not timestamp.tzinfo:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    window_end = timestamp + timedelta(minutes=settings.signal_market_valid_minutes)
+    if datetime.now(timezone.utc) < window_end:
+        return False
+    entry_zone = str(getattr(signal, "entry_zone", "") or "")
+    parts = [p.strip() for p in entry_zone.replace(",", "-").split("-") if p.strip()]
+    if len(parts) < 2:
+        return True
+    low = float(parts[0]) if parts[0].replace(".", "").replace("-", "").isdigit() else 0
+    high = float(parts[-1]) if parts[-1].replace(".", "").replace("-", "").isdigit() else 0
+    if low <= 0 or high <= 0:
+        return True
+    return price < low or price > high
 
 
 def expired(signal: Any) -> bool:

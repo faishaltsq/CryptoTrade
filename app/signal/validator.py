@@ -11,8 +11,6 @@ def validate_for_broadcast(ai_response: dict) -> tuple[bool, str]:
     risk = ai_response.get("risk", {}) or {}
     if float(risk.get("risk_reward") or 0) < settings.min_risk_reward:
         return False, "risk_reward_below_minimum"
-    if not ai_response.get("broadcast_allowed"):
-        return False, "ai_broadcast_not_allowed"
     if (ai_response.get("orderflow") or {}).get("conflict") is True:
         return False, "orderflow_conflict"
     required = [risk.get("entry_zone"), risk.get("stop_loss"), risk.get("take_profit_1"), risk.get("take_profit_2")]

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from time import time
 from typing import Any
@@ -6,13 +7,14 @@ from app.ai.deepseek_client import DeepSeekClient
 from app.analysis.setup_detector import detect_setup
 from app.analysis.risk_reward import actual_tp1_risk_reward
 from app.config import get_settings
-from app.database.repository import get_setting, save_orderflow_snapshot, save_rejected_setup, save_scan_log, save_signal_log, set_setting, update_signal_status
+from app.database.repository import get_setting, has_active_signal, save_orderflow_snapshot, save_rejected_setup, save_scan_log, save_signal_log, set_setting, update_signal_status
 from app.database.session import SessionLocal
 from app.learning.adaptive_scoring import apply_adaptive_scoring
 from app.learning.learning_prompt_builder import learning_context
 from app.learning.lesson_manager import active_lessons_for_prompt
 from app.learning.performance_analyzer import analyze_performance
 from app.market_data.base_provider import MarketDataProvider, ProviderError, empty_optional_market_data
+from app.market_data import cache as kline_cache
 from app.market_data.provider_factory import configured_provider_names, create_provider
 from app.orderflow.orderflow_analyzer import enrich_orderflow
 from app.orderflow.orderflow_aggregator import orderflow_aggregator
@@ -38,16 +40,174 @@ def _parse_price_range(value: str) -> float:
     return numbers[0] if numbers else 0.0
 
 
-def _recalculate_tp1_risk_reward(ai_response: dict) -> float:
+def _entry_midpoint(entry_raw: str) -> float:
+    if not entry_raw:
+        return 0.0
+    parts = str(entry_raw).replace(",", "").split("-")
+    numbers = [_to_float(p.strip()) for p in parts if p.strip()]
+    if not numbers:
+        return 0.0
+    return sum(numbers) / len(numbers)
+
+
+async def _get_current_price(provider: MarketDataProvider, symbol: str) -> float:
+    try:
+        tickers = await provider.get_tickers()
+        item = next((x for x in tickers if x.get("symbol") == symbol), None)
+        if item:
+            return float(item.get("last_price") or item.get("bid") or item.get("ask") or 0)
+    except Exception:  # noqa: BLE001
+        pass
+    return 0.0
+
+
+def _check_signal_freshness(signal: dict, price: float) -> str:
+    decision = str(signal.get("decision", "")).upper()
+    risk = signal.get("risk", {}) or {}
+    sl = _to_float(risk.get("stop_loss") or 0)
+    tp1 = _to_float(risk.get("take_profit_1") or 0)
+    tp2 = _to_float(risk.get("take_profit_2") or 0)
+    entry = _entry_midpoint(risk.get("entry_zone") or "")
+    if decision == "BUY":
+        if sl and price <= sl:
+            return "stale_sl_already_hit"
+        if tp2 and price >= tp2:
+            return "stale_tp2_already_hit"
+        if tp1 and price >= tp1:
+            return "stale_tp1_already_hit"
+        if entry and price > entry * 1.005:
+            return "stale_price_above_entry"
+    elif decision == "SELL":
+        if sl and price >= sl:
+            return "stale_sl_already_hit"
+        if tp2 and price <= tp2:
+            return "stale_tp2_already_hit"
+        if tp1 and price <= tp1:
+            return "stale_tp1_already_hit"
+        if entry and price < entry * 0.995:
+            return "stale_price_below_entry"
+    return ""
+
+
+BATCH_SIZE = 5
+
+
+def _format_batch_message(batch: list[dict], batch_num: int, total_batches: int) -> str:
+    rows = []
+    for sig in batch:
+        risk = sig.get("risk", {}) or {}
+        decision = sig.get("decision", "?")
+        emoji = "🟢" if decision == "BUY" else "🔴"
+        rows.append(
+            f"{emoji} <b>{sig.get('symbol','?')}</b> {decision} | "
+            f"conf={sig.get('confidence','?')}% | "
+            f"RR=1:{risk.get('risk_reward','?')} | "
+            f"Entry: {risk.get('entry_zone','?')} | "
+            f"SL: {risk.get('stop_loss','?')} | "
+            f"TP: {risk.get('take_profit_1','?')} / {risk.get('take_profit_2','?')}"
+        )
+    header = f"<b>Signal Batch #{batch_num}/{total_batches}</b>" if total_batches > 1 else "<b>Signals</b>"
+    return header + "\n\n" + "\n\n".join(rows)
+
+
+async def _send_signal_batches(bot, db, signal_rows: list[tuple], broadcast_enabled: bool) -> int:
+    if not signal_rows:
+        return 0
+    batches = [signal_rows[i:i + BATCH_SIZE] for i in range(0, len(signal_rows), BATCH_SIZE)]
+    total = len(batches)
+    broadcasted = 0
+    for idx, batch in enumerate(batches, 1):
+        batch_signals = [s for s, _r, _ok in batch]
+        msg = _format_batch_message(batch_signals, idx, total)
+        try:
+            await bot.send_admin(msg)
+            for _, row, _ok in batch:
+                update_signal_status(db, row.id, row.status or "pending", "sent_to_admin")
+                logger.info("Signal #%d admin sent (batch %d)", row.id, idx)
+        except Exception:  # noqa: BLE001
+            logger.exception("Batch admin send failed batch=%d/%d", idx, total)
+        if broadcast_enabled:
+            try:
+                ch_msg = _format_channel_batch_message(batch_signals)
+                await bot.send_channel(ch_msg)
+                for _, row, _ok in batch:
+                    update_signal_status(db, row.id, "broadcasted", "broadcasted")
+                broadcasted += len(batch)
+                logger.info("Batch #%d/%d broadcasted %d signals", idx, total, len(batch))
+            except Exception:  # noqa: BLE001
+                logger.exception("Batch channel broadcast failed batch=%d/%d", idx, total)
+    return broadcasted
+
+
+async def _prefetch_all(provider: MarketDataProvider, pairs: list[dict]) -> list[tuple[str, dict, dict, int, float]]:
+    sem = asyncio.Semaphore(3)
+
+    async def _fetch_one(pair: dict):
+        async with sem:
+            await asyncio.sleep(0.5)
+            symbol = pair["symbol"]
+            candles = await _fetch_multi_timeframe(provider, symbol)
+            futures = await _fetch_futures(provider, symbol)
+            await asyncio.sleep(0.3)
+            return (symbol, candles, futures, pair.get("volume_rank", 0), pair.get("spread_pct", 0.0))
+
+    return await asyncio.gather(*[_fetch_one(p) for p in pairs])
+
+
+async def _fetch_multi_timeframe(provider: MarketDataProvider, symbol: str) -> dict[str, pd.DataFrame]:
+    timeframes = {"M15": "15m", "H1": "1h", "H4": "4h", "D1": "1d"}
+    result: dict[str, pd.DataFrame] = {}
+    for name, interval in timeframes.items():
+        cached = kline_cache.get(provider.name, symbol, interval)
+        if cached is not None:
+            result[name] = klines_to_dataframe(cached)
+            continue
+        rows = await provider.get_klines(symbol, interval, limit=250)
+        kline_cache.set(provider.name, symbol, interval, rows)
+        result[name] = klines_to_dataframe(rows)
+    return result
+
+
+async def _fetch_futures(provider: MarketDataProvider, symbol: str) -> dict[str, Any]:
+    data = empty_optional_market_data()
+    try:
+        data.update(await provider.get_funding_rate(symbol))
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        data.update(await provider.get_open_interest(symbol))
+    except Exception:  # noqa: BLE001
+        pass
+    return data
+
+
+def _format_channel_batch_message(batch: list[dict]) -> str:
+    rows = []
+    for sig in batch:
+        risk = sig.get("risk", {}) or {}
+        decision = sig.get("decision", "?")
+        emoji = "🟢" if decision == "BUY" else "🔴"
+        rows.append(
+            f"{emoji} <b>{sig.get('symbol','?')}</b> {decision} | "
+            f"Entry: {risk.get('entry_zone','?')} | "
+            f"SL: <code>{risk.get('stop_loss','?')}</code> | "
+            f"TP: <code>{risk.get('take_profit_1','?')}</code> / <code>{risk.get('take_profit_2','?')}</code>"
+        )
+    return "<b>New Signals</b>\n\n" + "\n\n".join(rows)
+
+
+def _recalculate_geometric_rr(ai_response: dict) -> float:
     decision = str(ai_response.get("decision", "")).upper()
     risk_data = ai_response.get("risk") or {}
     entry_raw = risk_data.get("entry_zone") or ai_response.get("entry") or ""
     sl_raw = risk_data.get("stop_loss") or ai_response.get("stop_loss") or ""
-    tp1_raw = risk_data.get("take_profit_1") or ai_response.get("take_profit_1") or ""
-    entry = _parse_price_range(entry_raw)
+    tp2_raw = risk_data.get("take_profit_2") or ai_response.get("take_profit_2") or ""
+    entry = _entry_midpoint(entry_raw)
     sl = _to_float(sl_raw)
-    tp1 = _to_float(tp1_raw)
-    calculated = actual_tp1_risk_reward(decision, entry, sl, tp1)
+    tp2 = _to_float(tp2_raw)
+    if entry <= 0 or sl <= 0 or tp2 <= 0:
+        return float(risk_data.get("risk_reward") or 0)
+    calculated = actual_tp1_risk_reward(decision, entry, sl, tp2)
     if calculated <= 0:
         return float(risk_data.get("risk_reward") or 0)
     risk_data["risk_reward"] = calculated
@@ -60,6 +220,7 @@ class MarketScanner:
         self.settings = get_settings()
         self.ai = DeepSeekClient()
         self.broadcaster = SignalBroadcaster()
+        self._pending_batch: list[tuple[dict, Any, bool]] = []
 
     async def scan(self) -> dict[str, Any]:
         db = SessionLocal()
@@ -80,11 +241,12 @@ class MarketScanner:
             if self.settings.enable_orderflow:
                 orderflow_aggregator.start(provider.name, [p["symbol"] for p in pairs[: self.settings.max_realtime_pairs]])
             signals_sent = 0
+            batch_broadcast = auto_broadcast_enabled(db, self.settings.auto_broadcast)
             for pair in pairs:
                 symbol = pair["symbol"]
                 try:
-                    candles = await self.get_multi_timeframe(provider, symbol)
-                    futures_data = await self.get_futures_data(provider, symbol)
+                    candles = await _fetch_multi_timeframe(provider, symbol)
+                    futures_data = await _fetch_futures(provider, symbol)
                     orderflow_summaries = orderflow_aggregator.summaries(symbol)
                     if orderflow_summaries["1m"].get("trade_count", 0) == 0:
                         rest_orderflow = await self.get_rest_orderflow(provider, symbol)
@@ -102,6 +264,10 @@ class MarketScanner:
                         if reason == "insufficient_candle_data":
                             rejected_details.append({"symbol": symbol, "reason": reason, "candles": candle_counts(candles)})
                         save_rejected_setup(db, symbol, reason, {**tf_summary, "orderflow": orderflow_summary})
+                        continue
+                    if has_active_signal(db, symbol):
+                        rejected_reasons.append("duplicate_active_signal")
+                        save_rejected_setup(db, symbol, "duplicate_active_signal", {**tf_summary, "orderflow": orderflow_summary})
                         continue
                     candidate["provider"] = provider.name
                     active_lessons = active_lessons_for_prompt(db) if self.settings.enable_signal_learning else []
@@ -134,7 +300,7 @@ class MarketScanner:
                     ai_response["orderflow_summary"] = candidate.get("orderflow", {})
                     if ai_error:
                         logger.warning("AI response issue symbol=%s error=%s", symbol, ai_error)
-                    _recalculate_tp1_risk_reward(ai_response)
+                    _recalculate_geometric_rr(ai_response)
                     ok, validation_reason = validate_for_broadcast(ai_response)
                     ai_response["validation_status"] = "valid" if ok else "warning"
                     ai_response["validation_reason"] = validation_reason
@@ -149,23 +315,27 @@ class MarketScanner:
                         rejected_reasons.append(validation_reason)
                     if ai_response.get("decision") in {"BUY", "SELL"}:
                         signals_sent += 1
+                        self._pending_batch.append((ai_response, row, ok))
                         try:
                             await self.broadcaster.send_candidate_to_admin(row.id, ai_response)
+                            update_signal_status(db, row.id, row.status or "pending", "sent_to_admin")
+                            logger.info("Signal #%d admin sent symbol=%s", row.id, symbol)
                         except Exception:  # noqa: BLE001
                             logger.exception("Admin signal notification failed signal_id=%s symbol=%s", row.id, symbol)
                             update_signal_status(db, row.id, row.status or "pending", "admin_failed")
-                    if should_publish and broadcast_enabled:
-                        try:
-                            msg_id = await self.broadcaster.broadcast_channel(ai_response)
-                            update_signal_status(db, row.id, "broadcasted", "broadcasted")
-                            if msg_id:
-                                set_setting(db, f"pin_msg:{row.id}", str(msg_id))
-                                pinned = await self.broadcaster.pin_channel(msg_id)
-                                logger.info("Signal #%d pinned=%s msg_id=%s symbol=%s", row.id, pinned, msg_id, symbol)
-                        except Exception as exc:  # noqa: BLE001
-                            logger.exception("Channel broadcast failed signal_id=%s symbol=%s", row.id, symbol)
-                            update_signal_status(db, row.id, row.status or "pending", "failed")
-                            rejected_reasons.append("channel_broadcast_failed")
+                        if ok and broadcast_enabled:
+                            try:
+                                msg_id = await self.broadcaster.broadcast_channel(ai_response)
+                                update_signal_status(db, row.id, "broadcasted", "broadcasted")
+                                if msg_id:
+                                    set_setting(db, f"pin_msg:{row.id}", str(msg_id))
+                                    pinned = await self.broadcaster.pin_channel(msg_id)
+                                    logger.info("Signal #%d pinned=%s msg_id=%s symbol=%s", row.id, pinned, msg_id, symbol)
+                            except Exception as exc:  # noqa: BLE001
+                                logger.exception("Channel broadcast failed signal_id=%s symbol=%s", row.id, symbol)
+                        if len(self._pending_batch) >= BATCH_SIZE:
+                            await _send_signal_batches(self.broadcaster.bot, db, self._pending_batch[:BATCH_SIZE], batch_broadcast)
+                            self._pending_batch = self._pending_batch[BATCH_SIZE:]
                 except Exception as exc:  # noqa: BLE001
                     logger.exception("Scan failed for symbol=%s", symbol)
                     rejected_reasons.append("scanner error")
@@ -176,8 +346,11 @@ class MarketScanner:
                 "rejected_reasons": rejected_reasons,
                 "rejected_details": rejected_details[:30],
                 "provider": provider.name,
+                "kline_cache": kline_cache.snapshot_stats(),
             }
             save_scan_log(db, len(pairs), candidates, valid_signals, len(rejected_reasons), summary)
+            cache_s = kline_cache.snapshot_stats()
+            logger.info("Scan complete pairs=%d candidates=%d valid=%d cache_hit_rate=%.1f%% hits=%d misses=%d sets=%d entries=%d", len(pairs), candidates, valid_signals, cache_s["hit_rate_pct"], cache_s["hits"], cache_s["misses"], cache_s["sets"], cache_s["total_entries"])
             if signals_sent == 0:
                 await self.broadcaster.send_no_valid_setup(len(pairs), rejected_reasons, self.settings.scan_interval_minutes, rejected_details)
             return {"total_pairs": len(pairs), "candidates": candidates, "valid_signals": valid_signals, "rejected": len(rejected_reasons), "summary": summary}
@@ -208,7 +381,16 @@ class MarketScanner:
 
     async def get_multi_timeframe(self, provider: MarketDataProvider, symbol: str) -> dict[str, pd.DataFrame]:
         timeframes = {"M15": "15m", "H1": "1h", "H4": "4h", "D1": "1d"}
-        return {name: klines_to_dataframe(await provider.get_klines(symbol, interval, limit=250)) for name, interval in timeframes.items()}
+        result: dict[str, pd.DataFrame] = {}
+        for name, interval in timeframes.items():
+            cached = kline_cache.get(provider.name, symbol, interval)
+            if cached is not None:
+                result[name] = klines_to_dataframe(cached)
+                continue
+            rows = await provider.get_klines(symbol, interval, limit=250)
+            kline_cache.set(provider.name, symbol, interval, rows)
+            result[name] = klines_to_dataframe(rows)
+        return result
 
     async def get_futures_data(self, provider: MarketDataProvider, symbol: str) -> dict[str, Any]:
         data = empty_optional_market_data()

@@ -32,6 +32,9 @@ def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
 def summarize_indicators(df: pd.DataFrame) -> dict:
     last = df.iloc[-1]
     ema_bias = "bullish" if last.close > last.ema50 > last.ema200 else "bearish" if last.close < last.ema50 < last.ema200 else "neutral"
+    vol_sma20 = float(last.volume_sma20) if not pd.isna(last.volume_sma20) else 0
+    vol_ratio = round(float(last.volume) / vol_sma20, 2) if vol_sma20 > 0 else 1.0
+    vol_trend = "rising" if float(last.volume) > vol_sma20 * 1.1 else "falling" if float(last.volume) < vol_sma20 * 0.9 else "stable"
     return {
         "price": float(last.close),
         "ema50": float(last.ema50),
@@ -40,4 +43,6 @@ def summarize_indicators(df: pd.DataFrame) -> dict:
         "rsi": round(float(last.rsi14), 2) if not pd.isna(last.rsi14) else 0,
         "atr": round(float(last.atr14), 6) if not pd.isna(last.atr14) else 0,
         "volume_spike": bool(last.volume_spike),
+        "volume_ratio": vol_ratio,
+        "volume_trend": vol_trend,
     }

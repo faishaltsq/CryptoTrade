@@ -88,6 +88,14 @@ def format_entry_zone(value: Any) -> str:
     return f"Entry: <code>{h(raw)}</code>"
 
 
+def _header_warning_badge(signal: dict[str, Any]) -> str:
+    status = signal.get("validation_status", "")
+    reason = signal.get("validation_reason", "")
+    if status == "warning" and reason:
+        return f" ⚠️ <i>{h(reason)}</i>"
+    return ""
+
+
 def signal_order_label(signal: dict[str, Any]) -> str:
     risk = signal.get("risk", {}) or {}
     entry_type = str(risk.get("entry_type") or "limit").lower()
@@ -421,7 +429,9 @@ Unknown: {validations.get('-', 0)}
 
 <b>Broadcast</b>
 Broadcasted: {broadcasts.get('broadcasted', 0)}
+Sent to Admin: {broadcasts.get('sent_to_admin', 0)}
 Pending/Admin: {broadcasts.get('pending_admin', 0)}
+Admin Failed: {broadcasts.get('admin_failed', 0)}
 Failed: {broadcasts.get('failed', 0)}
 Skipped: {broadcasts.get('skipped', 0)}
 
@@ -528,6 +538,22 @@ def format_set_interval_message(old_value: Any, new_value: Any) -> str:
 
 Scan auto akan berjalan setiap <b>{h(new_value)} menit</b>.
 ⚠️ Restart server agar interval baru diterapkan."""
+
+
+def format_cache_stats_message(stats: dict[str, Any]) -> str:
+    by_interval = stats.get("by_interval", {})
+    interval_lines = "\n".join(f"  {interval}: {count} entries" for interval, count in sorted(by_interval.items())) or "  (empty)"
+    return f"""<b>📦 Kline Cache Stats</b>
+
+{SEP}
+<b>Lookups:</b> {stats.get('hits', 0)} hits / {stats.get('misses', 0)} misses ({stats.get('hit_rate_pct', 0)}%)
+<b>Stored:</b> {stats.get('sets', 0)} sets / {stats.get('total_entries', 0)} active entries
+
+<b>By Interval:</b>
+{interval_lines}
+
+{SEP}
+TTL: 15m=15min, 1h=1jam, 4h=4jam, 1d=24jam"""
 
 
 def format_broadcast_on_message(settings: dict[str, Any]) -> str:
@@ -647,7 +673,8 @@ def format_signal_candidate_admin_message(signal: dict[str, Any]) -> str:
     decision = signal.get("decision")
     order_label = signal_order_label(signal)
     validity = format_signal_validity(signal)
-    return f"""<b>{side_emoji(decision)} {h(signal.get('symbol'))} — {h(decision)} {h(order_label)}</b>
+    warning_badge = _header_warning_badge(signal)
+    return f"""<b>{side_emoji(decision)} {h(signal.get('symbol'))} — {h(decision)} {h(order_label)}{warning_badge}</b>
 
 {SEP}
 <b>Confidence:</b> {h(signal.get('confidence'))}%
@@ -985,23 +1012,23 @@ def format_lessons_message(lessons: list[Any]) -> str:
     active = [x for x in lessons if getattr(x, "status", "") == "active"]
     suggested = [x for x in lessons if getattr(x, "status", "") == "suggested"]
     rejected = [x for x in lessons if getattr(x, "status", "") == "rejected"]
-    active_rows = "\n".join(f"{i}. {h(x.lesson_text)} ({h(x.confidence_adjustment)} confidence)" for i, x in enumerate(active[:10], 1)) or "-"
-    suggested_rows = "\n".join(f"{i}. [ID {h(x.id)}] {h(x.lesson_text)}" for i, x in enumerate(suggested[:10], 1)) or "-"
+    active_rows = "\n".join(f"{i}. {h(x.lesson_text)} ({h(x.confidence_adjustment)} conf)" for i, x in enumerate(active[:10], 1)) or "-"
+    suggested_rows = "\n".join(f"{i}. [ID {h(x.id)}] <b>{h(x.lesson_type)}</b> adj={h(x.confidence_adjustment)} — {h((x.lesson_text or '')[:80])}" for i, x in enumerate(suggested[:15], 1)) or "-"
+    auto = " (auto-approve ON)" if get_settings().require_admin_approval_for_lessons is False else ""
     return f"""<b>🧠 Strategy Lessons</b>
 
 {SEP}
-Active Lessons: {len(active)}
-Suggested Lessons: {len(suggested)}
-Rejected Lessons: {len(rejected)}
+Active: {len(active)} | Suggested: {len(suggested)} | Rejected: {len(rejected)}{auto}
 
 {SEP}
-<b>Active</b>
+<b>Active (in prompt)</b>
 {active_rows}
 
-<b>Suggested</b>
+<b>Suggested (need approval)</b>
 {suggested_rows}
 
-Commands: <code>/lesson_detail ID</code>, <code>/approve_lesson ID</code>, <code>/reject_lesson ID</code>, <code>/disable_lesson ID</code>"""
+<b>Tip:</b> prioritize <code>confidence_boost</code> & <code>confidence_penalty</code> types.
+<code>/approve_lesson ID</code> | <code>/approve_all</code> (best only) | <code>/reject_lesson ID</code>"""
 
 
 def format_lesson_detail_message(lesson: Any, review: Any | None = None) -> str:

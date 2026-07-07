@@ -9,28 +9,26 @@ The project does not place trades. It does not use private exchange APIs, tradin
 ## Features
 
 - AI-driven market analysis via DeepSeek. No hardcoded single trading method.
-- Multi-provider public market data architecture.
-- Primary provider: Bybit.
-- Fallback provider: OKX.
-- Altcoin expansion provider: Gate.io, with MEXC support and KuCoin optional skeleton.
-- USDT perpetual market focus.
+- Multi-provider public market data architecture (Bybit, OKX, Gate.io, MEXC, KuCoin).
+- USDT perpetual market focus. Top 150 pairs by 24h volume.
 - Automatic provider failover when the primary provider fails.
+- Kline data cache with TTL (15m/1h/4h/24h) to reduce API calls by 60-70%.
 - Public WebSocket orderflow layer for realtime trade, ticker, kline, depth, and liquidation data where supported.
 - Orderflow used as confirmation layer only, not standalone entry trigger.
 - Multi-timeframe candles: `15m`, `1h`, `4h`, `1d`.
+- Detailed volume metrics sent to AI: volume spike, volume ratio, volume trend per timeframe.
 - Market feature extraction: EMA, RSI, ATR, swing points, market structure, price zones, volume spikes, risk-reward.
 - DeepSeek strict JSON validation.
-- Telegram admin approval flow with inline buttons.
-- Telegram channel broadcast after approval.
-- Signal outcome tracking with auto-resolve and performance analytics.
-- Signal learning loop: adaptive scoring, post-trade review, strategy lessons.
+- Telegram admin notification with validation warning badges inline in header.
+- Telegram channel auto-broadcast for valid signals, individual + batch recap per 5 signals.
+- Signal outcome tracking with candle-level backfill detection (catches TP/SL hits between polls).
+- Signal learning loop: adaptive scoring, post-trade review, strategy lessons with auto-approve for quality lessons.
 - Daily signal recap at 21:00 WIB.
-- TP1-based risk-reward recalculation from geometric distance.
+- TP2-based risk-reward recalculation from geometric distance (entry midpoint × TP2).
 - Compact single-message signal format (no split chunks).
 - 5 signals per page with Prev/Next navigation.
 - Validation warnings instead of blocking rejected signals.
-- `/restart` command with confirm button + ngrok cleanup.
-- Telegram retry with exponential backoff + 429 cooldown.
+- Telegram retry with ok-field validation + 429 cooldown.
 - SQLite MVP database with SQLAlchemy models.
 - FastAPI API and Swagger docs.
 - APScheduler scheduled scans with runtime interval changes.
@@ -136,8 +134,8 @@ If all fail, the scan is skipped and the bot remains online.
 ```env
 ENABLE_ORDERFLOW=true
 ENABLE_LIQUIDATION_STREAM=true
-MAX_REALTIME_PAIRS=30
-MAX_DEPTH_PAIRS=10
+MAX_REALTIME_PAIRS=70
+MAX_DEPTH_PAIRS=20
 ORDERFLOW_WINDOWS=10s,1m,5m
 ```
 
@@ -195,7 +193,7 @@ CryptoTrade stores every BUY/SELL signal in `signal_logs` with a unique ID, orig
 
 For every new signal, the bot also creates a `signal_outcomes` row with `pending` result. This is the foundation for a future learning loop, but it is not model fine-tuning and it does not give DeepSeek permanent memory.
 
-Outcome tracking is signal-only. It does not open positions, place orders, cancel orders, or use private trading APIs. It only checks public market prices against TP/SL/expiry rules.
+Outcome tracking is signal-only. It does not open positions, place orders, cancel orders, or use private trading APIs. It checks public market prices against TP/SL/expiry rules with spot price polling + candle high/low backfill to catch hits between polls.
 
 Tracked outcomes:
 
@@ -263,7 +261,7 @@ Safety rules:
 - DeepSeek review output must be valid JSON.
 - AI cannot activate rules directly.
 - New lessons are created as `suggested`.
-- Only `/approve_lesson ID` makes a lesson `active`.
+- Only `/approve_lesson ID` makes a lesson `active`, or set `REQUIRE_ADMIN_APPROVAL_FOR_LESSONS=false` for auto-approve (quality types only).
 - Rejected or disabled lessons are not injected into prompts.
 
 Learning config:
@@ -430,28 +428,30 @@ Admin-only commands:
 
 - `/start` — Start + auto broadcast enable
 - `/status` — Live server state
+- `/cache` — Kline cache stats (hit rate, entries, TTL)
 - `/scan_now` — Manual market scan
 - `/pairs` — Pair list (20/page)
 - `/top_volume` — Highest volume pairs (15/page)
 - `/signals` — Recent signals (5/page with Prev/Next)
 - `/signal_detail ID` — Full signal detail
-- `/signal_result ID RESULT` — Set outcome (hit_tp1, hit_tp2, hit_sl, expired, cancelled)
+- `/signal_result ID RESULT` — Set outcome (hit_tp1, hit_tp2, hit_sl, expired, etc.)
 - `/signal_recap` — Today signal summary
 - `/pending_signals` — Pending outcome signals
 - `/outcomes` — Recent resolved outcomes
 - `/performance` — Winrate, per-symbol stats
 - `/waiting` — Rejected/Warning candidate list
-- `/settings` — Config overview + Restart button
+- `/settings` — Config overview
 - `/set_confidence 70` — Min confidence
 - `/set_rr 2.0` — Min risk-reward
 - `/set_interval 15` — Scan interval (minutes, needs restart)
 - `/broadcast_on` — Enable auto channel broadcast
 - `/broadcast_off` — Manual approval mode
-- `/restart` — Confirm restart server
 - `/last_scan` — Last scan result
 - `/diagnose_market` — Provider connectivity test
 - `/orderflow SYMBOL` — Orderflow summary
 - `/orderflow_top` — Top orderflow activity
+- `/nudge ID approve|reject` — Manual signal approve/reject
+- `/approve_all` — Auto-approve best 10 suggested lessons
 - `/lessons` — Strategy lessons list
 - `/lesson_detail ID` — Lesson detail
 - `/approve_lesson ID` — Approve suggested lesson

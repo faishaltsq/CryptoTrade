@@ -21,7 +21,21 @@ def create_lesson_from_review(db, signal_id: int, review: dict):
     if quality == "good_signal" and suggested.get("lesson_type") != "confidence_boost":
         return None
     suggested["evidence_count"] = max(1, int(suggested.get("evidence_count") or 1))
-    return repository.create_strategy_lesson(db, suggested, signal_id)
+    lesson = repository.create_strategy_lesson(db, suggested, signal_id)
+    settings = get_settings()
+    if not settings.require_admin_approval_for_lessons:
+        if _should_auto_approve(suggested, quality):
+            repository.update_lesson_status(db, lesson.id, "approved")
+    return lesson
+
+
+def _should_auto_approve(lesson: dict, quality: str) -> bool:
+    lesson_type = lesson.get("lesson_type", "")
+    if lesson_type in {"confidence_boost", "confidence_penalty", "filter_rule", "risk_adjustment"}:
+        return True
+    if lesson_type == "warning_note" and quality == "valid_loss":
+        return True
+    return False
 
 
 def approve_lesson(db, lesson_id: int):

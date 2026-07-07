@@ -189,6 +189,14 @@ def get_pending_signals(db: Session) -> list[SignalLog]:
     return db.query(SignalLog).filter(SignalLog.outcome_status == "pending", SignalLog.decision.in_(["BUY", "SELL"])).order_by(desc(SignalLog.timestamp)).all()
 
 
+def has_active_signal(db: Session, symbol: str) -> bool:
+    return db.query(SignalLog).filter(
+        SignalLog.symbol == symbol.upper(),
+        SignalLog.outcome_status.in_(["pending", "hit_tp1"]),
+        SignalLog.decision.in_(["BUY", "SELL"]),
+    ).count() > 0
+
+
 def waiting_signals(db: Session, limit: int = 10) -> list[SignalLog]:
     return db.query(SignalLog).filter(SignalLog.decision == "WAIT").order_by(desc(SignalLog.timestamp)).limit(limit).all()
 

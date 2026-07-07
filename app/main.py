@@ -1,8 +1,5 @@
 import asyncio
 import json
-import os
-import subprocess
-import sys
 from fastapi import Depends, FastAPI, Request
 from sqlalchemy.orm import Session
 from app.config import get_settings
@@ -11,10 +8,11 @@ from app.database.session import SessionLocal, get_db, init_db
 from app.market_data.provider_diagnostic import run_market_diagnostic
 from app.learning.post_trade_reviewer import review_signal
 from app.scheduler import run_scan_now, scan_job, scan_state, scheduler_info, start_scheduler, stop_scheduler
+from app.signal.broadcaster import SignalBroadcaster
 from app.telegram.admin_bot import TelegramBot
 from app.telegram.callbacks import handle_callback
 from app.telegram.commands import command_from_callback, command_keyboard, handle_command, is_admin, pagination_keyboard, signal_list_keyboard
-from app.telegram.message_formatter import format_access_denied_message, format_diagnose_provider_message, format_no_setup_message, format_restarting_message, format_scan_result_message, format_signal_review_message
+from app.telegram.message_formatter import format_access_denied_message, format_diagnose_provider_message, format_no_setup_message, format_scan_result_message, format_signal_review_message
 from app.telegram.webhook_manager import setup_public_webhook, stop_ngrok
 from app.utils.logger import setup_logging
 
@@ -128,6 +126,8 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)) -> d
             await bot.send_admin(format_diagnose_provider_message(rows), command_keyboard())
         if action and action.startswith("review_signal:"):
             asyncio.create_task(run_signal_review_and_notify(bot, int(action.split(":", 1)[1])))
+        if action and action.startswith("nudge_approve:"):
+            asyncio.create_task(run_nudge_approve(bot, int(action.split(":", 1)[1])))
         return {"ok": True}
     if "callback_query" in update:
         callback = update["callback_query"]
@@ -136,15 +136,6 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)) -> d
             await bot.send_message(chat_id, format_access_denied_message())
             return {"ok": True}
         callback_data = callback.get("data", "")
-        if callback_data == "restart_confirm":
-            await bot.send_admin(format_restarting_message())
-            await asyncio.sleep(0.3)
-            try:
-                stop_ngrok()
-            except Exception:
-                pass
-            _spawn_restarter()
-            return {"ok": True}
         command = command_from_callback(callback_data)
         if command:
             reply, action = handle_command(db, command)
@@ -179,14 +170,36 @@ async def run_signal_review_and_notify(bot: TelegramBot, signal_id: int) -> None
         db.close()
 
 
+async def run_nudge_approve(bot: TelegramBot, signal_id: int) -> None:
+    db = SessionLocal()
+    try:
+        row = repository.get_signal_by_id(db, signal_id)
+        if not row:
+            await bot.send_admin(f"<b>Signal #{signal_id} not found</b>")
+            return
+        ai = json.loads(row.ai_response_json or "{}")
+        if not ai:
+            await bot.send_admin(f"<b>Signal #{signal_id} has no data</b>")
+            return
+        broadcaster = SignalBroadcaster()
+        msg_id = await broadcaster.broadcast_channel(ai)
+        if msg_id:
+            repository.update_signal_status(db, signal_id, row.status or "pending", "broadcasted")
+            repository.set_setting(db, f"pin_msg:{signal_id}", str(msg_id))
+            await bot.send_admin(f"<b>Signal #{signal_id} approved & broadcasted</b>", command_keyboard())
+        else:
+            await bot.send_admin(f"<b>Signal #{signal_id} broadcast failed</b> - channel mungkin tidak dikonfigurasi", command_keyboard())
+    except Exception as e:
+        await bot.send_admin(f"<b>Signal #{signal_id} error:</b> {e}", command_keyboard())
+    finally:
+        db.close()
+
+
 def keyboard_for_action(action: str | None) -> dict:
     if not action:
         return command_keyboard()
-    if action == "restart_prompt":
-        return {"inline_keyboard": [[{"text": "Yes, Restart", "callback_data": "restart_confirm"}, {"text": "Cancel", "callback_data": "cmd:help"}]]}
     if action == "settings":
         buttons = command_keyboard().get("inline_keyboard", [])
-        buttons.append([{"text": "Restart Server", "callback_data": "cmd:restart"}])
         return {"inline_keyboard": buttons}
     if action.startswith("keyboard:"):
         parts = action.split(":")
@@ -198,25 +211,6 @@ def keyboard_for_action(action: str | None) -> dict:
     return command_keyboard()
 
 
-def _spawn_restarter() -> None:
-    import tempfile
-    wd = os.getcwd()
-    py = sys.executable
-    bat = tempfile.NamedTemporaryFile(mode="w", suffix=".bat", delete=False, encoding="utf-8")
-    bat.write(f"""@echo off
-timeout /t 3 /nobreak >nul
-netstat -ano | findstr ":8000.*LISTENING" >nul
-if %errorlevel% equ 0 (
-    for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":8000.*LISTENING"') do (taskkill /F /PID %%p >nul 2>&1)
-    timeout /t 2 /nobreak >nul
-)
-cd /d {wd}
-"{py}" run.py
-del "%~f0"
-""")
-    bat_name = bat.name
-    bat.close()
-    subprocess.Popen(["cmd", "/c", bat_name], creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS if sys.platform == "win32" else 0)
 
 
 def row_to_dict(row) -> dict:

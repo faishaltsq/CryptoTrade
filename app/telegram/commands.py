@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -7,6 +8,7 @@ from app.database import repository
 from app.telegram.message_formatter import (
     format_broadcast_off_message,
     format_broadcast_on_message,
+    format_cache_stats_message,
     format_error_message,
     format_daily_signal_recap_message,
     format_help_message,
@@ -23,7 +25,6 @@ from app.telegram.message_formatter import (
     format_pairs_message,
     format_performance_message,
     format_pending_signals_message,
-    format_restart_confirm_message,
     format_set_confidence_message,
     format_set_rr_message,
     format_set_interval_message,
@@ -39,11 +40,14 @@ from app.telegram.message_formatter import (
 )
 from app.learning.lesson_manager import approve_lesson, disable_lesson, reject_lesson
 from app.learning.performance_analyzer import analyze_performance
+from app.market_data import cache as kline_cache
+from app.signal.broadcaster import SignalBroadcaster
 
 
 HELP_TEXT = """Commands:
 /start
 /status
+/cache
 /scan_now
 /pairs
 /top_volume
@@ -68,7 +72,6 @@ HELP_TEXT = """Commands:
 /set_interval <minutes>
 /broadcast_on
 /broadcast_off
-/restart
 /last_scan
 /diagnose_market
 /orderflow SYMBOL
@@ -92,7 +95,6 @@ COMMAND_CALLBACKS = {
     "settings": "/settings",
     "broadcast_on": "/broadcast_on",
     "broadcast_off": "/broadcast_off",
-    "restart": "/restart",
     "last_scan": "/last_scan",
     "diagnose_market": "/diagnose_market",
     "orderflow_top": "/orderflow_top",
@@ -145,6 +147,21 @@ def is_admin(chat_id: str) -> bool:
     return str(chat_id) == str(get_settings().telegram_admin_chat_id)
 
 
+def handle_nudge(db: Session, parts: list[str]) -> str:
+    if len(parts) < 3 or not parts[1].isdigit() or parts[2] not in {"approve", "reject"}:
+        return format_error_message("Invalid Nudge", "Gunakan /nudge ID approve atau /nudge ID reject", "Contoh: /nudge 826 approve")
+    signal_id = int(parts[1])
+    action = parts[2]
+    row = repository.get_signal_by_id(db, signal_id)
+    if not row:
+        return format_error_message("Signal Not Found", str(signal_id))
+    if action == "approve":
+        return f"nudge_approve:{signal_id}"
+    else:
+        repository.update_signal_status(db, signal_id, row.status or "pending", "rejected")
+        return f"<b>Signal #{signal_id} rejected</b>"
+
+
 def handle_command(db: Session, text: str) -> tuple[str, str | None]:
     settings = get_settings()
     parts = text.strip().split()
@@ -161,6 +178,13 @@ def handle_command(db: Session, text: str) -> tuple[str, str | None]:
         interval = int(db_interval) if db_interval and db_interval.isdigit() else settings.scan_interval_minutes
         summary = json.loads(scan.summary_json) if scan else {}
         return format_status_message({"market_provider": settings.market_provider, "fallback_provider": settings.fallback_market_provider, "enable_orderflow": settings.enable_orderflow, "auto_broadcast": auto, "max_pairs": settings.max_pairs, "max_realtime_pairs": settings.max_realtime_pairs, "max_depth_pairs": settings.max_depth_pairs, "scan_interval_minutes": interval, "last_scan_time": scan.timestamp if scan else None, "min_confidence": min_conf, "min_risk_reward": min_rr, "total_scanned": getattr(scan, "total_pairs", 0) if scan else 0, "candidate_count": getattr(scan, "candidates_count", 0) if scan else 0, "valid_signal_count": getattr(scan, "valid_signals_count", 0) if scan else 0, "rejected_count": getattr(scan, "rejected_count", 0) if scan else 0, "provider": summary.get("provider")}), None
+    if cmd == "/cache":
+        return format_cache_stats_message(kline_cache.snapshot_stats()), None
+    if cmd == "/nudge":
+        result = handle_nudge(db, parts)
+        if result.startswith("nudge_approve:"):
+            return f"<b>Approving signal #{parts[1]}...</b>", result
+        return result, None
     if cmd == "/scan_now":
         return "<b>🔎 Manual Scan Started</b>\n\nBot sedang scan market sekarang. Hasil akan dikirim setelah scan selesai.", "scan_now"
     if cmd == "/pairs":
@@ -222,6 +246,19 @@ def handle_command(db: Session, text: str) -> tuple[str, str | None]:
         if not lesson:
             return format_error_message("Lesson Not Found", "Gunakan /approve_lesson ID"), None
         return format_lesson_approved_message(approve_lesson(db, lesson.id)), None
+    if cmd == "/approve_all":
+        suggested = repository.get_lessons(db, "suggested", 100)
+        priority = sorted(suggested, key=lambda x: (
+            0 if getattr(x, "lesson_type", "") in {"confidence_boost", "confidence_penalty"} else
+            1 if getattr(x, "lesson_type", "") in {"filter_rule", "risk_adjustment"} else 2,
+            -abs(int(getattr(x, "confidence_adjustment", 0) or 0))
+        ))
+        approved = 0
+        for lesson in priority[:10]:
+            approve_lesson(db, lesson.id)
+            approved += 1
+        remaining = len(suggested) - approved
+        return f"<b>Auto-Approved {approved} lessons</b> (best priority)\n{remaining} remaining in suggested.\n\nRun <code>/lessons</code> to review.", None
     if cmd == "/reject_lesson":
         lesson = parse_lesson_arg(db, parts)
         if not lesson:
@@ -288,8 +325,6 @@ def handle_command(db: Session, text: str) -> tuple[str, str | None]:
         old = repository.get_setting(db, "scan_interval_minutes", str(settings.scan_interval_minutes))
         repository.set_setting(db, "scan_interval_minutes", parts[1])
         return format_set_interval_message(old, parts[1]), None
-    if cmd == "/restart":
-        return format_restart_confirm_message(), "restart_prompt"
     if cmd == "/last_scan":
         scan = repository.latest_scan(db)
         return format_last_scan_message(scan), None

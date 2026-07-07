@@ -85,7 +85,12 @@ class TelegramBot:
                         await asyncio.sleep(retry_after)
                         continue
                     response.raise_for_status()
-                    return response.json()
+                    body = response.json()
+                    if isinstance(body, dict) and body.get("ok") is False:
+                        error_code = body.get("error_code", "")
+                        description = body.get("description", "")
+                        raise RuntimeError(f"Telegram API error code={error_code} description={description}")
+                    return body
             except (httpx.TimeoutException, httpx.ConnectError, httpx.RemoteProtocolError) as exc:
                 last_error = str(exc)
             except httpx.HTTPStatusError as exc:

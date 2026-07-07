@@ -73,10 +73,6 @@ def _ws_provider_order() -> list[str]:
         name = getattr(settings, env_key.lower(), "")
         if name and name not in order:
             order.append(name)
-    if "bybit" not in order:
-        order.append("bybit")
-    if "okx" not in order:
-        order.append("okx")
     return order
 
 
