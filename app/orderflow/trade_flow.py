@@ -26,7 +26,11 @@ class TradeFlowStore:
         total_volume = buy_volume + sell_volume
         avg_trade_size = total_volume / len(rows) if rows else 0.0
         large_threshold = max(avg_trade_size * 3, 0)
-        large_trade_count = sum(1 for x in rows if x["qty"] > large_threshold) if rows and large_threshold else 0
+        large_trades = [x for x in rows if large_threshold and x["qty"] > large_threshold]
+        large_buy_vol = sum(x["qty"] for x in large_trades if x["side"] == "buy")
+        large_sell_vol = sum(x["qty"] for x in large_trades if x["side"] == "sell")
+        large_buy_notional = sum(x["notional"] for x in large_trades if x["side"] == "buy")
+        large_sell_notional = sum(x["notional"] for x in large_trades if x["side"] == "sell")
         trades_per_second = len(rows) / max(window_seconds, 1)
         return {
             "buy_volume": round(buy_volume, 6),
@@ -36,7 +40,11 @@ class TradeFlowStore:
             "trade_count": len(rows),
             "trade_intensity": intensity(trades_per_second),
             "average_trade_size": round(avg_trade_size, 6),
-            "large_trade_count": large_trade_count,
+            "large_trade_count": len(large_trades),
+            "large_trade_buy_volume": round(large_buy_vol, 6),
+            "large_trade_sell_volume": round(large_sell_vol, 6),
+            "large_trade_buy_notional": round(large_buy_notional, 2),
+            "large_trade_sell_notional": round(large_sell_notional, 2),
         }
 
     def cumulative_volume_delta(self, symbol: str) -> float:

@@ -114,6 +114,11 @@ def start_scheduler() -> None:
         scheduler.add_job(daily_signal_recap_job, "cron", hour=21, minute=0, timezone=ZoneInfo("Asia/Jakarta"), id="daily_signal_recap", replace_existing=True)
         scheduler.start()
         logger.info("Scheduler started interval=%s minutes", interval)
+    from app.analysis.volume_spike_monitor import run_volume_spike_monitor
+    from app.analysis.zone_proximity_monitor import run_zone_proximity_monitor
+    bot = TelegramBot()
+    asyncio.create_task(run_volume_spike_monitor(bot))
+    asyncio.create_task(run_zone_proximity_monitor(bot))
 
 
 async def daily_signal_recap_job() -> None:
@@ -124,6 +129,11 @@ async def daily_signal_recap_job() -> None:
         bot = TelegramBot()
         await bot.send_admin(message)
         await bot.send_channel(message)
+        try:
+            await bot._send_with_retry({"chat_id": bot.settings.telegram_channel_chat_id}, "unpinAllChatMessages")
+            logger.info("Channel all messages unpinned")
+        except Exception:  # noqa: BLE001
+            pass
         logger.info("Daily signal recap sent label=%s", label)
     except Exception:  # noqa: BLE001
         logger.exception("Daily signal recap failed")

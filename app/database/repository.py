@@ -2,7 +2,7 @@ import json
 from typing import Any
 from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
-from app.database.models import OrderflowSnapshot, PerformanceSnapshot, RejectedSetup, ScanLog, Setting, SignalLog, SignalOutcome, SignalReview, StrategyLesson
+from app.database.models import OrderflowSnapshot, PerformanceSnapshot, RejectedSetup, ScanLog, Setting, SignalLog, SignalOutcome, SignalReview, StrategyLesson, WatchlistItem
 
 
 FINAL_OUTCOMES = {"hit_tp1", "hit_tp2", "hit_sl", "break_even", "expired", "invalidated", "manually_closed"}
@@ -128,6 +128,10 @@ def save_orderflow_snapshot(db: Session, summary: dict[str, Any]) -> OrderflowSn
         trade_intensity=summary.get("trade_intensity", "low"),
         average_trade_size=float(summary.get("average_trade_size") or 0),
         large_trade_count=int(summary.get("large_trade_count") or 0),
+        large_trade_buy_volume=float(summary.get("large_trade_buy_volume") or 0),
+        large_trade_sell_volume=float(summary.get("large_trade_sell_volume") or 0),
+        large_trade_buy_notional=float(summary.get("large_trade_buy_notional") or 0),
+        large_trade_sell_notional=float(summary.get("large_trade_sell_notional") or 0),
         best_bid=float(summary.get("best_bid") or 0),
         best_ask=float(summary.get("best_ask") or 0),
         spread=float(summary.get("spread") or 0),
@@ -439,3 +443,50 @@ def parse_entry_price(entry_zone: str) -> float:
     if not values:
         return 0.0
     return sum(values) / len(values)
+
+
+def upsert_watchlist_item(db: Session, symbol: str, direction: str, **kwargs) -> WatchlistItem:
+    row = db.query(WatchlistItem).filter(WatchlistItem.symbol == symbol.upper(), WatchlistItem.direction == direction.upper()).first()
+    if row:
+        for key, value in kwargs.items():
+            if hasattr(row, key):
+                setattr(row, key, value)
+    else:
+        row = WatchlistItem(symbol=symbol.upper(), direction=direction.upper(), **kwargs)
+        db.add(row)
+    db.commit()
+    return row
+
+
+def get_active_watchlist(db: Session) -> list[WatchlistItem]:
+    return db.query(WatchlistItem).filter(WatchlistItem.state.in_(["READY", "WATCHING", "WEAK"])).order_by(WatchlistItem.priority_score.desc()).all()
+
+
+def remove_expired_watchlist(db: Session) -> int:
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    count = db.query(WatchlistItem).filter(WatchlistItem.expires_at < now).delete()
+    if count:
+        db.commit()
+    return count
+
+
+def remove_completed_watchlist(db: Session) -> int:
+    active = db.query(SignalLog).filter(SignalLog.outcome_status == "pending", SignalLog.decision.in_(["BUY", "SELL"])).all()
+    active_symbols = {(s.symbol.upper(), s.decision) for s in active}
+    count = 0
+    items = get_active_watchlist(db)
+    for item in items:
+        key = (item.symbol, item.direction)
+        if key not in active_symbols:
+            item.state = "EXPIRED"
+            count += 1
+    if count:
+        db.commit()
+    return count
+
+
+def clear_all_watchlist(db: Session) -> int:
+    count = db.query(WatchlistItem).delete()
+    db.commit()
+    return count

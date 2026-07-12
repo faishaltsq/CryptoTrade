@@ -1,0 +1,183 @@
+================================================================================
+PROMPT: FALSE BREAKOUT / BULL TRAP / BEAR TRAP DETECTION
+================================================================================
+Author note: Prompt ini untuk mendeteksi breakout palsu sebelum entry terjadi.
+False breakout adalah salah satu jebakan terbesar di crypto — harga terlihat breakout
+dari level kunci, tapi cepat berbalik dan menjebak trader yang FOMO entry.
+
+KONSEP INTI:
+  "Breakout yang valid membutuhkan bukti kelanjutan — bukan hanya penembusan level."
+  Setiap breakout harus diverifikasi dengan volume, struktur, dan momentum
+  sebelum dianggap valid. Jika tidak, anggap sebagai potensi jebakan.
+
+================================================================================
+SECTION 1: DEFINISI FALSE BREAKOUT
+================================================================================
+
+FALSE BREAKOUT (Breakout Palsu) terjadi ketika:
+  - Harga menembus level kunci (resistance untuk BUY, support untuk SELL)
+  - Namun cepat kembali ke dalam range (dalam 1-3 candle M15 atau 1 candle H1)
+  - Tidak ada volume konfirmasi yang signifikan saat breakout terjadi
+  - Sering digunakan market maker untuk "sweep liquidity" di atas/bawah level
+
+BULL TRAP (Jebakan Bull):
+  - Harga breakout ke atas resistance → trader bullish masuk BUY
+  - Harga langsung berbalik turun tajam → BUY trader terjebak
+  - Indikator: volume rendah saat breakout, RSI sudah overbought, tidak ada re-test
+
+BEAR TRAP (Jebakan Bear):
+  - Harga breakdown ke bawah support → trader bearish masuk SELL
+  - Harga langsung berbalik naik tajam → SELL trader terjebak
+  - Indikator: volume rendah saat breakdown, RSI sudah oversold, tidak ada follow-through
+
+================================================================================
+SECTION 2: SINYAL FALSE BREAKOUT — DETEKSI DINI
+================================================================================
+
+INDIKATOR BREAKOUT PALSU (semakin banyak terpenuhi, semakin tinggi risiko jebakan):
+
+Volume Test:
+  [!] Volume saat candle breakout LEBIH RENDAH dari 20-period SMA → FALSE BREAKOUT
+      (volume_spike = false pada candle breakout)
+  [!] Volume menurun dalam 2 candle setelah breakout → kehilangan momentum
+  [OK] Volume pada candle breakout 1.5x+ di atas SMA → breakout berpotensi valid
+
+RSI Test:
+  [!] Untuk BUY breakout: RSI M15 atau H1 > 75 saat breakout terjadi (overbought)
+      → harga kemungkinan besar berbalik setelah sweep liquidity
+  [!] Untuk SELL breakout: RSI M15 atau H1 < 25 saat breakdown (oversold)
+  [OK] RSI antara 40-65 saat breakout → momentum masih sehat
+
+Price Action Test:
+  [!] Candle breakout memiliki wick panjang di arah breakout + body kecil
+      → harga mencoba breakout tapi kembali ke range (rejection)
+  [!] Candle setelah breakout langsung menutup kembali di bawah level yang ditembus
+      → level tidak terkonfirmasi sebagai support baru
+  [OK] 2+ candle M15 menutup DI ATAS resistance yang ditembus → valid breakout
+
+Structure Test:
+  [!] Breakout terjadi TANPA BOS (Break of Structure) yang jelas pada H1 atau H4
+      → hanya sweep, bukan perubahan struktur
+  [!] Tidak ada Higher High sebelum breakout (untuk BUY) → trend belum established
+  [OK] BOS pada H1 + breakout M15 = struktur mendukung, breakout lebih valid
+
+Orderflow Test:
+  [!] Delta ratio < 1.0 saat breakout BUY (lebih banyak seller dari buyer) → bearish absorption
+  [!] Orderbook: banyak large ask orders menumpuk tepat di atas breakout level → supply wall
+  [OK] Delta ratio > 1.5 + taker buy > 1.3 saat breakout BUY → tekanan beli nyata
+
+================================================================================
+SECTION 3: SCORING SISTEM FALSE BREAKOUT
+================================================================================
+
+Hitung FALSE BREAKOUT SCORE (0-10, semakin tinggi semakin besar risiko jebakan):
+
+  + 2 poin → volume_spike = false pada candle breakout
+  + 2 poin → RSI > 75 (BUY) atau < 25 (SELL) saat breakout
+  + 2 poin → Candle breakout punya wick > 50% dari panjang candle di arah breakout
+  + 1 poin → Candle berikut langsung kembali ke dalam range
+  + 1 poin → Tidak ada BOS pada H1/H4 sebelum breakout
+  + 1 poin → Delta ratio berlawanan arah breakout
+  + 1 poin → Breakout terjadi di dekat area round number (psikologikal level)
+
+Interpretasi:
+  Score 0-2  → Breakout kemungkinan VALID, lanjutkan analisa entry
+  Score 3-4  → WASPADA — verifikasi tambahan diperlukan, prefer LIMIT bukan MARKET
+  Score 5-6  → LIKELY FALSE BREAKOUT — tunggu re-test dengan konfirmasi
+  Score 7+   → ALMOST CERTAINLY FALSE BREAKOUT — return WAIT, jangan entry
+
+================================================================================
+SECTION 4: AI DECISION RULES
+================================================================================
+
+WAJIB RETURN "WAIT" jika false_breakout_score >= 5:
+  - Meskipun setup terlihat bullish/bearish secara visual
+  - Meskipun HTF mendukung arah tersebut
+  - Alasan: risiko stop hunt terlalu tinggi, tunggu konfirmasi ulang
+
+KURANGI CONFIDENCE jika false_breakout_score 3-4:
+  - Kurangi confidence sebesar (false_breakout_score * 5) poin
+  - Ubah entry_type dari MARKET ke LIMIT
+  - Pindahkan entry zone lebih dalam (lebih konservatif)
+
+IZINKAN ENTRY jika false_breakout_score 0-2:
+  - Breakout berpotensi valid
+  - Gunakan normal entry logic
+  - Tambahkan + 5 confidence jika score = 0 (breakout sangat bersih)
+
+STRATEGI SETELAH FALSE BREAKOUT TERDETEKSI:
+  Jika false breakout terdeteksi ke atas (bull trap):
+    → Tunggu re-test resistance yang ditembus (sekarang menjadi support)
+    → Jika re-test gagal (harga tidak bisa kembali ke atas level) → potensi SELL
+    → Entry type: LIMIT SELL di bawah level yang gagal ditembus
+
+  Jika false breakout terdeteksi ke bawah (bear trap):
+    → Tunggu harga kembali ke dalam range dan test support yang ditembus
+    → Jika harga bounce dari level tersebut → potensi BUY
+    → Entry type: LIMIT BUY di atas level yang gagal ditembus ke bawah
+
+================================================================================
+SECTION 5: POLA FALSE BREAKOUT YANG PALING UMUM DI CRYPTO
+================================================================================
+
+1. STOP HUNT SWEEP (Paling Umum):
+   - Harga naik tepat di atas swing high sebelumnya, lalu berbalik
+   - Tujuan: mengambil stop loss trader yang short di atas swing high
+   - Ciri: pergerakan tajam dan cepat, langsung reversal dalam 1-2 candle
+   - Cara menghindari: tidak entry BUY saat harga sudah 0.5-1% di atas swing high tanpa volume
+
+2. NEWS-DRIVEN FALSE BREAKOUT:
+   - Harga breakout saat ada berita, lalu kembali saat volatilitas mereda
+   - Ciri: volume sangat tinggi tapi harga tidak sustain di level baru
+   - Cara menghindari: hindari entry dalam 30 menit pertama setelah major news
+
+3. RANGE BOUNDARY SWEEP:
+   - Harga di dalam range panjang, sweep batas range atas/bawah lalu kembali
+   - Ciri: RSI extreme, harga cepat kembali ke tengah range
+   - Cara menghindari: identifikasi range dengan jelas, anggap breakout sebagai
+     sweep sampai ada 3 candle H1 yang menutup di luar range
+
+4. FAKE PUMP / FAKE DUMP (Low Cap Altcoins):
+   - Manipulasi oleh whale, harga naik/turun tajam tanpa alasan fundamental
+   - Ciri: volume spike sangat besar tapi tiba-tiba, harga langsung balik
+   - Cara menghindari: hindari entry di altcoin dengan volume rank > 50 saat ada spike aneh
+
+================================================================================
+SECTION 6: OUTPUT JSON FORMAT TAMBAHAN
+================================================================================
+
+{
+  "false_breakout_analysis": {
+    "breakout_detected": false,
+    "breakout_direction": "up | down | none",
+    "false_breakout_score": 0,
+    "false_breakout_risk": "low | medium | high | very_high",
+    "trap_type": "bull_trap | bear_trap | stop_hunt | none",
+    "volume_confirms_breakout": false,
+    "rsi_overbought_at_breakout": false,
+    "structure_supports_breakout": false,
+    "recommended_action": "proceed | wait_retest | wait_confirmation | avoid"
+  }
+}
+
+================================================================================
+SECTION 7: INTEGRASI KE BOT
+================================================================================
+
+Di setup_detector.py:
+  Tambahkan fungsi calculate_false_breakout_score(tf, direction)
+  Panggil setelah calculate_plan(), sebelum volume_gate check.
+  Jika score >= 7: return None, "false_breakout_risk", tf
+  Jika score >= 5: tambahkan ke payload sebagai warning, kurangi confidence
+
+Di AI prompt (SYSTEM_PROMPT):
+  Tambahkan rule: "If false_breakout_score >= 5 in the input data,
+  return WAIT regardless of other conditions."
+
+Di payload ke AI:
+  Sertakan false_breakout_score dan false_breakout_risk sebagai field input
+  agar AI bisa mempertimbangkan dalam analisa finalnya.
+
+================================================================================
+END OF PROMPT
+================================================================================

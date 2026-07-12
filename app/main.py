@@ -128,6 +128,12 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)) -> d
             asyncio.create_task(run_signal_review_and_notify(bot, int(action.split(":", 1)[1])))
         if action and action.startswith("nudge_approve:"):
             asyncio.create_task(run_nudge_approve(bot, int(action.split(":", 1)[1])))
+        if action == "watchlist_refresh":
+            from app.watchlist.manager import refresh_all
+            await refresh_all(bot)
+        if action == "watchlist_clear":
+            from app.watchlist.manager import force_refresh
+            await force_refresh(bot)
         return {"ok": True}
     if "callback_query" in update:
         callback = update["callback_query"]

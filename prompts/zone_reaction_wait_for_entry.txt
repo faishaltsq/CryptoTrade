@@ -1,0 +1,300 @@
+================================================================================
+PROMPT: DEMAND/SUPPLY ZONE REACTION ANALYSIS & WAIT-FOR-REACTION ENTRY
+================================================================================
+Author note: Prompt ini untuk fitur "zone watcher" — ketika harga mendekati area
+demand/supply yang valid, bot menunggu reaksi harga di zona tersebut, lalu AI
+menganalisa apakah cukup kuat untuk entry. Ini menghindari entry terlalu dini
+sebelum konfirmasi reaksi terjadi.
+
+KONSEP INTI:
+  "Jangan entry saat harga MENDEKATI zona — entry saat harga BEREAKSI di zona."
+  Price approaching a zone ≠ Price reacting at a zone.
+  Reaction = ada bukti konkret bahwa zona menahan harga (rejection, absorption, reversal).
+
+================================================================================
+SECTION 1: DEFINISI ZONA DEMAND/SUPPLY YANG VALID
+================================================================================
+
+Zona DEMAND yang valid (untuk BUY):
+  - Terbentuk dari candle impulse bullish yang kuat (besar, volume tinggi) yang
+    meninggalkan "base" di bawahnya sebelum harga naik tajam
+  - Zona belum pernah dikunjungi kembali lebih dari 2x (semakin sering diuji, semakin lemah)
+  - Berada di area Higher Low pada struktur HTF (H4/D1)
+  - Memiliki jarak yang jelas ke resistance terdekat (setidaknya 2:1 RR dari zona ke target)
+  - Volume pada candle pembentuk zona tinggi (volume_spike=true idealnya)
+
+Zona SUPPLY yang valid (untuk SELL):
+  - Terbentuk dari candle impulse bearish besar yang meninggalkan "base" di atas
+  - Zona belum dikunjungi kembali lebih dari 2x
+  - Berada di area Lower High pada struktur HTF
+  - Ada jarak ke support (RR setidaknya 2:1)
+  - Volume saat pembentukan zona tinggi
+
+Zona TIDAK VALID jika:
+  - Sudah diuji lebih dari 3x (zona habis/exhausted)
+  - Terbentuk di pasar ranging tanpa impuls yang jelas
+  - Zona terlalu lebar (lebih dari 1.5x ATR H1) — terlalu ambigu
+  - Price action pembentuk zona normal/kecil (tidak ada impulse)
+
+================================================================================
+SECTION 2: DETEKSI "HARGA MENDEKATI ZONA"
+================================================================================
+
+Harga dianggap "mendekati zona" jika:
+  - Jarak current_price ke tepi atas zona demand: antara 0.3% - 2.0% (masih di atas)
+  - Jarak current_price ke tepi bawah zona supply: antara 0.3% - 2.0% (masih di bawah)
+  - Timeframe pengukuran: gunakan M15 untuk jarak akurat
+
+Status entry saat mendekati:
+  → entry_type = "wait_confirmation"
+  → decision = "WAIT" (jangan entry dulu)
+  → reason harus menyebutkan zona yang terdeteksi dan jarak saat ini
+
+Trigger monitoring:
+  Saat harga memasuki zona (price_within_zone = true):
+  → Aktifkan analisa reaksi (SECTION 3)
+  → Kirim alert ke admin: "Harga memasuki zona demand/supply — menunggu reaksi"
+
+================================================================================
+SECTION 3: ANALISA REAKSI HARGA DI ZONA
+================================================================================
+
+Setelah harga MEMASUKI zona, analisa 3 konfirmasi berikut:
+
+KONFIRMASI 1 — PRICE ACTION REACTION (wajib minimal 1):
+  a. Rejection Wick: candle M15 atau H1 memiliki lower wick panjang (wick > 50% body)
+     di dalam/bawah zona demand → bukti seller gagal mendorong harga turun lebih jauh
+  b. Engulfing Bullish: candle besar M15/H1 yang menutup di atas open candle sebelumnya
+     setelah harga menyentuh zona demand
+  c. Pinbar / Hammer: single candle dengan wick panjang dan body kecil di zona
+  d. Inside Bar Break: harga kompres dalam zona lalu break ke atas (BUY) atau bawah (SELL)
+  e. Consecutive Rejection: 2+ candle berturut-turut gagal menutup di bawah zona demand
+     (untuk BUY) atau di atas zona supply (untuk SELL)
+
+KONFIRMASI 2 — VOLUME KONFIRMASI (wajib minimal 1):
+  a. Volume menurun saat harga turun ke zona demand (selling exhaustion)
+  b. Volume spike pada candle reaksi/reversal di zona
+  c. Delta ratio berubah: dari bearish ke bullish saat di zona demand
+  d. Orderbook: bid stacking muncul di dalam/bawah zona demand
+  e. Taker buy/sell ratio berbalik: dari < 0.8 menjadi > 1.2 di dalam zona
+
+KONFIRMASI 3 — STRUKTUR KONFIRMASI (opsional, tambah confidence):
+  a. BOS (Break of Structure) kecil ke atas pada M15 setelah menyentuh zona demand
+  b. CHoCH (Change of Character): sebelumnya bearish, sekarang bullish di M15
+  c. Higher Low terbentuk di dalam atau tepat di atas zona demand
+  d. M15 candle close di atas zona setelah menyentuh (false break / wick sweep)
+
+REAKSI KUAT (entry langsung direkomendasikan jika confidence >= min_confidence):
+  → 3 konfirmasi terpenuhi: confidence + 20
+  → 2 konfirmasi terpenuhi: confidence + 12
+  → 1 konfirmasi terpenuhi: confidence + 5, pertimbangkan LIMIT entry lebih dalam
+
+REAKSI LEMAH (masih WAIT atau LIMIT jauh):
+  → Harga menembus zona tanpa reaksi → zona ini invalid, cari zona berikutnya
+  → Volume meningkat saat menembus zona → trend berlanjut, jangan counter-trade
+  → Candle menutup di luar zona dengan body besar → zona jebol
+
+================================================================================
+SECTION 4: FLOW LENGKAP "WAIT-FOR-REACTION" LOGIC
+================================================================================
+
+[PHASE 1: IDENTIFIKASI ZONA]
+    ↓
+    Apakah ada zona demand/supply valid pada H1/H4?
+    → YA: tandai koordinat zona (high_zone, low_zone)
+    → TIDAK: return WAIT, setup_type = "no_trade"
+
+[PHASE 2: MONITOR JARAK HARGA KE ZONA]
+    ↓
+    Hitung jarak: distance_pct = |current_price - zona_edge| / current_price * 100
+    ↓
+    distance_pct > 2%  → WAIT, harga masih jauh
+    distance_pct 0.3-2% → APPROACHING, siapkan alert, entry_type = "wait_confirmation"
+    distance_pct < 0.3% → INSIDE ZONE, aktifkan analisa reaksi
+
+[PHASE 3: ANALISA REAKSI (saat price_within_zone = true)]
+    ↓
+    Cek konfirmasi 1, 2, 3 dari Section 3
+    ↓
+    Reaction score = jumlah konfirmasi yang terpenuhi (0-3)
+    ↓
+    reaction_score = 0 → WAIT, zona belum bereaksi
+    reaction_score = 1 → LIMIT entry pada tengah zona, confidence rendah
+    reaction_score = 2 → LIMIT atau MARKET entry, confidence medium
+    reaction_score = 3 → MARKET entry (jika masih dalam zona) atau LIMIT (jika sudah rebound)
+
+[PHASE 4: KEPUTUSAN ENTRY]
+    ↓
+    Entry zone = tengah zona demand (untuk BUY) atau tengah zona supply (untuk SELL)
+    Stop loss = di bawah zona demand low (BUY) atau di atas zona supply high (SELL)
+    TP1 = nearest resistance/support
+    TP2 = next major level HTF
+    ↓
+    Verifikasi RR >= min_risk_reward
+    Verifikasi confidence >= min_confidence
+    ↓
+    Set broadcast_allowed = true jika semua terpenuhi
+
+================================================================================
+SECTION 5: AI DECISION RULES UNTUK ZONA REACTION
+================================================================================
+
+WAJIB RETURN "WAIT" jika:
+  - Harga mendekati zona tapi belum masuk (distance_pct > 0.3%)
+  - Harga di dalam zona tapi reaction_score = 0
+  - Zona sudah diuji lebih dari 3x sebelumnya
+  - Volume increase saat harga menembus zona (trend continuation, bukan reversal)
+  - Candle M15/H1 menutup dengan body penuh di luar zona (zona jebol)
+  - Risk-reward < min_risk_reward setelah zona ditembus
+
+BOLEH RETURN "BUY" di zona demand jika:
+  - Harga sedang di dalam zona demand (price_within_zone = true)
+  - Minimal 2 dari 3 konfirmasi terpenuhi
+  - Volume tidak naik saat harga turun ke zona (exhaustion selling)
+  - HTF (H4/D1) masih bullish atau setidaknya neutral
+  - Confidence >= min_confidence setelah adjustment
+
+BOLEH RETURN "SELL" di zona supply jika:
+  - Harga sedang di dalam zona supply (price_within_zone = true)
+  - Minimal 2 dari 3 konfirmasi terpenuhi
+  - Volume tidak naik saat harga naik ke zona (exhaustion buying)
+  - HTF (H4/D1) masih bearish atau setidaknya neutral
+  - Confidence >= min_confidence setelah adjustment
+
+ENTRY TYPE RULES untuk zona:
+  - Harga masih di dalam zona saat analisa: gunakan MARKET (sudah di zona)
+  - Harga sudah rebound dari zona (naik 0.5-1% dari low zona): gunakan LIMIT
+    set limit di tengah zona atau zona low untuk BUY (lebih baik fill)
+  - Harga jauh dari zona: gunakan LIMIT atau WAIT, entry_type = wait_confirmation
+
+================================================================================
+SECTION 6: CONFIDENCE ADJUSTMENT UNTUK ZONA REACTION
+================================================================================
+
+Mulai dari base confidence (dari technical_score + orderflow_score + risk_score).
+Terapkan adjustment berikut berdasarkan kualitas reaksi di zona:
+
+POSITIVE ADJUSTMENT:
+  + 20 → reaction_score = 3 (semua konfirmasi terpenuhi)
+  + 12 → reaction_score = 2
+  + 5  → reaction_score = 1
+  + 8  → Zona pertama kali diuji (fresh zone, belum pernah dikunjungi)
+  + 5  → Zona terbentuk dari impulse sangat kuat (> 3x ATR dalam 1 candle)
+  + 5  → HTF trend align dengan arah entry di zona
+  + 4  → Volume spike pada candle reaksi
+  + 3  → Orderflow confirms (taker ratio berbalik)
+
+NEGATIVE ADJUSTMENT:
+  - 10 → Zona sudah diuji 2x sebelumnya (masih valid tapi melemah)
+  - 15 → HTF berlawanan arah dengan entry di zona
+  - 8  → Volume naik saat price mendekati zona (trend bisa tembus)
+  - 5  → Reaction candle body kecil (weak reaction)
+  - 12 → Candle menutup di bawah zona demand low (zona jebol, langsung return WAIT)
+
+================================================================================
+SECTION 7: OUTPUT JSON FORMAT TAMBAHAN
+================================================================================
+
+Tambahkan section ini ke output JSON standar:
+
+{
+  "zone_analysis": {
+    "demand_zone_detected": true,
+    "demand_zone_high": "",
+    "demand_zone_low": "",
+    "supply_zone_detected": false,
+    "supply_zone_high": "",
+    "supply_zone_low": "",
+    "zone_test_count": 0,
+    "zone_freshness": "fresh | tested_once | tested_twice | exhausted",
+    "price_within_zone": false,
+    "distance_to_nearest_zone_pct": 0.0,
+    "approaching_zone": false
+  },
+  "zone_reaction": {
+    "reaction_detected": false,
+    "reaction_score": 0,
+    "confirmations": {
+      "price_action": false,
+      "price_action_type": "rejection_wick | engulfing | pinbar | inside_bar_break | consecutive_rejection | none",
+      "volume_confirms": false,
+      "structure_confirms": false
+    },
+    "zone_broken": false,
+    "entry_recommended": false,
+    "entry_reason": ""
+  }
+}
+
+================================================================================
+SECTION 8: REKOMENDASI IMPLEMENTASI DI BOT
+================================================================================
+
+OPSI A — Dua-tahap scan (paling ideal):
+  Scan tahap 1: Deteksi zona valid dari klines H4/H1 → simpan ke DB tabel "zones"
+  Scan tahap 2: Setiap scan M15, cek apakah harga mendekati/memasuki zona yang disimpan
+  Jika mendekati: kirim notif ke admin bahwa zona sedang diapproach
+  Jika memasuki: jalankan AI analisa penuh dengan data reaksi terkini
+
+OPSI B — Integrasi ke scanner yang ada (paling cepat):
+  Di setup_detector.py, tambahkan fungsi detect_zones(df_h1, df_h4)
+  yang mengembalikan demand_zone dan supply_zone.
+  Tambahkan zone_analysis ke payload AI yang sudah ada.
+  Ubah setup_detector agar tidak langsung reject setup jika
+  "no_actionable_area" tapi harga mendekati zona valid (ubah jadi "approaching_zone").
+
+OPSI C — Volume Spike Monitor enhancement:
+  Bot sudah memiliki volume_spike_monitor.py
+  Tambahkan logika: saat volume_spike terdeteksi DI DALAM zona,
+  ini adalah konfirmasi kuat → langsung jalankan full AI analisa.
+
+DATA YANG DIBUTUHKAN (sudah tersedia di klines):
+  - H1 klines: untuk deteksi zona (swing highs/lows impulse)
+  - H4 klines: untuk validasi struktur HTF
+  - M15 klines: untuk deteksi reaksi real-time (wick, engulfing)
+  - Volume per candle: untuk konfirmasi exhaustion / spike
+
+DATA YANG PERLU DITAMBAHKAN:
+  - Jumlah kali zona diuji (perlu tracking di DB atau dihitung dari klines)
+  - Jarak ke zona sebagai field baru di tf summary
+
+LANGKAH IMPLEMENTASI YANG DISARANKAN:
+  1. Tambahkan fungsi detect_demand_supply_zones() di market_structure.py
+  2. Tambahkan fungsi zone_reaction_analysis() di setup_detector.py
+  3. Tambahkan "zone_analysis" dan "zone_reaction" ke build_ai_payload()
+  4. Ubah logika "no_actionable_area" di reject_reason() agar zone approaching
+     tidak langsung dibuang tapi menunggu reaksi
+  5. Tambahkan notif Telegram "Zone Alert" saat harga mendekati zona valid
+
+================================================================================
+SECTION 9: CONTOH SKENARIO LENGKAP
+================================================================================
+
+Skenario: BTCUSDT, price = 63.500, zona demand terdeteksi di 63.000 - 63.200
+
+Phase 1 (price = 63.500, jarak = 0.47%):
+  → distance_to_zone = 0.47%, approaching_zone = true
+  → decision = WAIT, entry_type = "wait_confirmation"
+  → reason: "BTC approaching valid demand zone 63000-63200. Waiting for reaction."
+  → Notif ke admin: "⚠️ BTCUSDT mendekati zona demand 63000-63200 (jarak 0.47%)"
+
+Phase 2 (price = 63.150, berada di dalam zona):
+  → price_within_zone = true
+  → AI analisa reaksi dimulai
+  → Cek M15: ada rejection wick panjang dari 63.050 ke 63.180 → konfirmasi 1 ✓
+  → Cek volume: volume menurun 3 candle terakhir → konfirmasi 2 ✓
+  → Cek struktur: belum ada BOS → konfirmasi 3 ✗
+  → reaction_score = 2 → confidence + 12
+
+Phase 3 (keputusan entry):
+  → base_confidence = 58 + 12 = 70 → memenuhi MIN_CONFIDENCE
+  → entry_zone = "63050-63150" (tengah zona)
+  → stop_loss = "62900" (di bawah zona low dengan buffer)
+  → tp1 = "63800", tp2 = "64500"
+  → rr = (64500-63100)/(63100-62900) = 7.0 → sangat baik
+  → broadcast_allowed = true
+  → Notif: "✅ BUY BTCUSDT — Reaksi di zona demand dikonfirmasi (2/3 konfirmasi)"
+
+================================================================================
+END OF PROMPT
+================================================================================

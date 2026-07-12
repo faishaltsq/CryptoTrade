@@ -4,7 +4,7 @@ from time import time
 from typing import Any
 import pandas as pd
 from app.ai.deepseek_client import DeepSeekClient
-from app.analysis.setup_detector import detect_setup
+from app.analysis.setup_detector import detect_setup, analyze_timeframe, compute_btc_status, get_current_session
 from app.analysis.risk_reward import actual_tp1_risk_reward
 from app.config import get_settings
 from app.database.repository import get_setting, has_active_signal, save_orderflow_snapshot, save_rejected_setup, save_scan_log, save_signal_log, set_setting, update_signal_status
@@ -19,6 +19,7 @@ from app.market_data.provider_factory import configured_provider_names, create_p
 from app.orderflow.orderflow_analyzer import enrich_orderflow
 from app.orderflow.orderflow_aggregator import orderflow_aggregator
 from app.signal.broadcaster import SignalBroadcaster
+from app.signal.formatter import admin_signal_message
 from app.signal.validator import validate_for_broadcast
 
 
@@ -99,7 +100,7 @@ def _format_batch_message(batch: list[dict], batch_num: int, total_batches: int)
         decision = sig.get("decision", "?")
         emoji = "🟢" if decision == "BUY" else "🔴"
         rows.append(
-            f"{emoji} <b>{sig.get('symbol','?')}</b> {decision} | "
+            f"{emoji} <code>{sig.get('symbol','?')}</code> {decision} | "
             f"conf={sig.get('confidence','?')}% | "
             f"RR=1:{risk.get('risk_reward','?')} | "
             f"Entry: {risk.get('entry_zone','?')} | "
@@ -188,7 +189,7 @@ def _format_channel_batch_message(batch: list[dict]) -> str:
         decision = sig.get("decision", "?")
         emoji = "🟢" if decision == "BUY" else "🔴"
         rows.append(
-            f"{emoji} <b>{sig.get('symbol','?')}</b> {decision} | "
+            f"{emoji} <code>{sig.get('symbol','?')}</code> {decision} | "
             f"Entry: {risk.get('entry_zone','?')} | "
             f"SL: <code>{risk.get('stop_loss','?')}</code> | "
             f"TP: <code>{risk.get('take_profit_1','?')}</code> / <code>{risk.get('take_profit_2','?')}</code>"
@@ -242,6 +243,12 @@ class MarketScanner:
                 orderflow_aggregator.start(provider.name, [p["symbol"] for p in pairs[: self.settings.max_realtime_pairs]])
             signals_sent = 0
             batch_broadcast = auto_broadcast_enabled(db, self.settings.auto_broadcast)
+            btc_tf = {}
+            try:
+                btc_candles = await _fetch_multi_timeframe(provider, "BTCUSDT")
+                btc_tf = {name: analyze_timeframe(df) for name, df in btc_candles.items()}
+            except Exception:  # noqa: BLE001
+                pass
             for pair in pairs:
                 symbol = pair["symbol"]
                 try:
@@ -265,10 +272,20 @@ class MarketScanner:
                             rejected_details.append({"symbol": symbol, "reason": reason, "candles": candle_counts(candles)})
                         save_rejected_setup(db, symbol, reason, {**tf_summary, "orderflow": orderflow_summary})
                         continue
-                    if has_active_signal(db, symbol):
+                    is_duplicate = has_active_signal(db, symbol)
+                    if is_duplicate:
                         rejected_reasons.append("duplicate_active_signal")
                         save_rejected_setup(db, symbol, "duplicate_active_signal", {**tf_summary, "orderflow": orderflow_summary})
-                        continue
+                    if btc_tf and symbol.upper() != "BTCUSDT":
+                        candidate["btc_context"] = {
+                            "btc_d1_trend": btc_tf.get("D1", {}).get("trend", "unclear"),
+                            "btc_h4_trend": btc_tf.get("H4", {}).get("trend", "unclear"),
+                            "btc_h1_trend": btc_tf.get("H1", {}).get("trend", "unclear"),
+                            "btc_status": compute_btc_status(btc_tf),
+                            "btc_volume_spike_h1": btc_tf.get("H1", {}).get("volume_spike", False),
+                        }
+                    session = get_current_session()
+                    candidate["session_context"] = session
                     candidate["provider"] = provider.name
                     active_lessons = active_lessons_for_prompt(db) if self.settings.enable_signal_learning else []
                     performance = analyze_performance(db, f"{self.settings.performance_lookback_days}d") if self.settings.enable_signal_learning else {}
@@ -283,6 +300,49 @@ class MarketScanner:
                             save_rejected_setup(db, symbol, reason, {**tf_summary, "orderflow": orderflow_summary, "adaptive_scoring": candidate.get("adaptive_scoring", {})})
                             continue
                     candidates += 1
+                    zone = candidate.get("zone_analysis", {})
+                    demand_dist = zone.get("distance_to_demand_pct", 0)
+                    supply_dist = zone.get("distance_to_supply_pct", 0)
+                    within_demand = zone.get("price_within_demand", False)
+                    within_supply = zone.get("price_within_supply", False)
+                    if within_demand:
+                        try:
+                            await self.broadcaster.bot.send_admin(f"<b>Zone Alert</b>\nSymbol: <b>{symbol}</b>\nPrice INSIDE demand zone {zone.get('demand_zone_low','?')}-{zone.get('demand_zone_high','?')}\nReaction score: {zone.get('demand_reaction_score',0)}/3 (tested {zone.get('demand_test_count',0)}x)")
+                        except Exception:  # noqa: BLE001
+                            pass
+                    elif within_supply:
+                        try:
+                            await self.broadcaster.bot.send_admin(f"<b>Zone Alert</b>\nSymbol: <b>{symbol}</b>\nPrice INSIDE supply zone {zone.get('supply_zone_low','?')}-{zone.get('supply_zone_high','?')}\nReaction score: {zone.get('supply_reaction_score',0)}/3 (tested {zone.get('supply_test_count',0)}x)")
+                        except Exception:  # noqa: BLE001
+                            pass
+                    elif 0 < demand_dist <= 2:
+                        try:
+                            await self.broadcaster.bot.send_admin(f"<b>Zone Alert</b>\nSymbol: <b>{symbol}</b>\nApproaching demand zone ({demand_dist}% away)\nZone: {zone.get('demand_zone_low','?')}-{zone.get('demand_zone_high','?')} (tested {zone.get('demand_test_count',0)}x)")
+                        except Exception:  # noqa: BLE001
+                            pass
+                    if 0 < supply_dist <= 2:
+                        try:
+                            await self.broadcaster.bot.send_admin(f"<b>Zone Alert</b>\nSymbol: <b>{symbol}</b>\nApproaching supply zone ({supply_dist}% away)\nZone: {zone.get('supply_zone_low','?')}-{zone.get('supply_zone_high','?')} (tested {zone.get('supply_test_count',0)}x)")
+                        except Exception:  # noqa: BLE001
+                            pass
+                    tfs = candidate.get("timeframes", {})
+                    m15_spike = tfs.get("M15", {}).get("volume_spike")
+                    h1_spike = tfs.get("H1", {}).get("volume_spike")
+                    had_spike = False
+                    spike_emoji = ""
+                    spike_dir = ""
+                    if m15_spike or h1_spike:
+                        had_spike = True
+                        spike_dir = candidate.get("candidate_direction", "?").upper()
+                        spike_emoji = "🟢" if spike_dir == "BUY" else "🔴"
+                        tf_label = "M15" if m15_spike else "H1"
+                        ratio_m15 = tfs.get("M15", {}).get("volume_ratio", 0)
+                        ratio_h1 = tfs.get("H1", {}).get("volume_ratio", 0)
+                        ratio = max(ratio_m15, ratio_h1)
+                        try:
+                            await self.broadcaster.bot.send_admin(f"{spike_emoji} <b>Volume Spike</b> — {symbol} ({tf_label} {ratio}x avg) | {candidate.get('current_price')}\nAI analyzing...")
+                        except Exception:  # noqa: BLE001
+                            pass
                     if self.settings.enable_orderflow:
                         orderflow_aggregator.start_depth(provider.name, symbol)
                     ai_response, ai_error = await self.ai.analyze(candidate)
@@ -291,7 +351,7 @@ class MarketScanner:
                         ai_response["orderflow"]["conflict"] = True
                         ai_response["broadcast_allowed"] = False
                     ai_response["scores"] = candidate.get("scores", {})
-                    ai_response["provider"] = candidate.get("provider", "")
+                    ai_response["provider"] = candidate.get("provider", "") or provider.name
                     ai_response["current_price"] = candidate.get("current_price", 0)
                     adaptive = candidate.get("adaptive_scoring", {}) or {}
                     if adaptive.get("confidence_adjustment"):
@@ -301,7 +361,12 @@ class MarketScanner:
                     if ai_error:
                         logger.warning("AI response issue symbol=%s error=%s", symbol, ai_error)
                     _recalculate_geometric_rr(ai_response)
+                    from app.analysis.risk_reward import ensure_tp2_probability
+                    ensure_tp2_probability(ai_response, candidate)
                     ok, validation_reason = validate_for_broadcast(ai_response)
+                    if is_duplicate:
+                        validation_reason = "duplicate_active_signal" if validation_reason == "valid" else f"duplicate_active_signal+{validation_reason}"
+                        ok = False
                     ai_response["validation_status"] = "valid" if ok else "warning"
                     ai_response["validation_reason"] = validation_reason
                     broadcast_enabled = auto_broadcast_enabled(db, self.settings.auto_broadcast)
@@ -311,13 +376,34 @@ class MarketScanner:
                     ai_response["signal_id"] = row.id
                     if ok:
                         valid_signals += 1
-                    else:
+                    elif not is_duplicate:
                         rejected_reasons.append(validation_reason)
+                    if ai_response.get("decision") == "WAIT" and self.settings.enable_zone_monitor:
+                        zone = candidate.get("zone_analysis", {})
+                        within = zone.get("price_within_demand") or zone.get("price_within_supply")
+                        near = 0 < zone.get("distance_to_demand_pct", 999) < self.settings.zone_approaching_pct or 0 < zone.get("distance_to_supply_pct", 999) < self.settings.zone_approaching_pct
+                        at_sr = candidate.get("timeframes", {}).get("H1", {}).get("at_support") or candidate.get("timeframes", {}).get("H1", {}).get("at_resistance")
+                        from app.watchlist.manager import update_from_scan
+                        update_from_scan(symbol, candidate.get("candidate_direction", "?"), ai_response, candidate, ok, is_duplicate, {"within_zone": within, "near_zone": near, "at_sr": at_sr})
+                    if had_spike:
+                        ai_decision = ai_response.get("decision", "?")
+                        ai_conf = ai_response.get("confidence", "?")
+                        rr = (ai_response.get("risk") or {}).get("risk_reward", "?")
+                        label = "VALID" if ok else validation_reason.replace("_", " ").title()
+                        try:
+                            await self.broadcaster.bot.send_admin(f"{spike_emoji} <b>AI Result</b> — {symbol}: <b>{ai_decision}</b> (conf={ai_conf}%, RR=1:{rr}) | {label}")
+                        except Exception:  # noqa: BLE001
+                            pass
                     if ai_response.get("decision") in {"BUY", "SELL"}:
+                        from app.watchlist.manager import update_from_scan
+                        zone = candidate.get("zone_analysis", {})
+                        update_from_scan(symbol, candidate.get("candidate_direction", "?"), ai_response, candidate, ok, is_duplicate, {"within_zone": zone.get("price_within_demand") or zone.get("price_within_supply"), "near_zone": False, "at_sr": candidate.get("timeframes", {}).get("H1", {}).get("at_support") or candidate.get("timeframes", {}).get("H1", {}).get("at_resistance")})
                         signals_sent += 1
                         self._pending_batch.append((ai_response, row, ok))
                         try:
-                            await self.broadcaster.send_candidate_to_admin(row.id, ai_response)
+                            msg_ids = await self.broadcaster.bot.send_message(self.settings.telegram_admin_chat_id, admin_signal_message(row.id, ai_response))
+                            if msg_ids:
+                                set_setting(db, f"admin_msg:{row.id}", str(msg_ids[0]))
                             update_signal_status(db, row.id, row.status or "pending", "sent_to_admin")
                             logger.info("Signal #%d admin sent symbol=%s", row.id, symbol)
                         except Exception:  # noqa: BLE001
@@ -336,6 +422,22 @@ class MarketScanner:
                         if len(self._pending_batch) >= BATCH_SIZE:
                             await _send_signal_batches(self.broadcaster.bot, db, self._pending_batch[:BATCH_SIZE], batch_broadcast)
                             self._pending_batch = self._pending_batch[BATCH_SIZE:]
+                    if is_duplicate:
+                        try:
+                            decision = ai_response.get("decision", "?")
+                            conf = ai_response.get("confidence", "?")
+                            reason = (ai_response.get("reason") or "-")[:500]
+                            orig = _get_active_signal_info(db, symbol)
+                            if orig:
+                                orig_msg_id = get_setting(db, f"admin_msg:{orig['id']}", "")
+                                if orig_msg_id and orig_msg_id.isdigit():
+                                    update_text = f"<b>Duplicate Update</b>\nSymbol: <b>{symbol}</b>\nNew AI: <b>{decision}</b> (conf={conf}%)\nOriginal: #{orig['id']} {orig['decision']} (conf={orig['confidence']}%)\n{reason}\n\nSignal ID: <code>{row.id}</code>"
+                                    edited = await self.broadcaster.bot.edit_message(self.settings.telegram_admin_chat_id, int(orig_msg_id), update_text)
+                                    if not edited:
+                                        await self.broadcaster.bot.send_admin(update_text)
+                            logger.info("Duplicate update sent symbol=%s decision=%s", symbol, decision)
+                        except Exception:  # noqa: BLE001
+                            logger.exception("Duplicate update failed symbol=%s", symbol)
                 except Exception as exc:  # noqa: BLE001
                     logger.exception("Scan failed for symbol=%s", symbol)
                     rejected_reasons.append("scanner error")
@@ -353,6 +455,8 @@ class MarketScanner:
             logger.info("Scan complete pairs=%d candidates=%d valid=%d cache_hit_rate=%.1f%% hits=%d misses=%d sets=%d entries=%d", len(pairs), candidates, valid_signals, cache_s["hit_rate_pct"], cache_s["hits"], cache_s["misses"], cache_s["sets"], cache_s["total_entries"])
             if signals_sent == 0:
                 await self.broadcaster.send_no_valid_setup(len(pairs), rejected_reasons, self.settings.scan_interval_minutes, rejected_details)
+            from app.watchlist.manager import refresh_all
+            await refresh_all(self.broadcaster.bot)
             return {"total_pairs": len(pairs), "candidates": candidates, "valid_signals": valid_signals, "rejected": len(rejected_reasons), "summary": summary}
         finally:
             db.close()
@@ -421,19 +525,49 @@ def merge_top_pairs(symbols: list[dict[str, Any]], tickers: list[dict[str, Any]]
         symbol = ticker.get("symbol")
         if symbol not in active:
             continue
-        rows.append({**active[symbol], **ticker})
+        merged = {**active[symbol], **ticker}
+        skip_reason = _pair_quality_filter(symbol, merged)
+        if skip_reason:
+            logger.debug("Pair filtered symbol=%s reason=%s", symbol, skip_reason)
+            continue
+        rows.append(merged)
     rows.sort(key=lambda x: float(x.get("quote_volume") or 0), reverse=True)
     for idx, row in enumerate(rows, start=1):
         row["volume_rank"] = idx
     return rows[:max_pairs]
 
 
+def _pair_quality_filter(symbol: str, row: dict[str, Any]) -> str:
+    """Return a non-empty reason string if the pair should be excluded, else empty string."""
+    # Reject symbols with non-ASCII characters (e.g. Chinese characters like '龙虾USDT')
+    if not symbol.isascii():
+        return "non_ascii_symbol"
+    # Reject base tokens that are too short (e.g. 'H', 'B', 'M', 'U' before USDT)
+    base = str(row.get("base") or symbol.replace("USDT", "")).upper()
+    if len(base) < 2:
+        return "base_too_short"
+    # Reject extreme 24h movers: likely pump-dump or manipulation (>50% move in either direction)
+    try:
+        pct = abs(float(row.get("price_change_pct") or 0))
+        if pct > 50.0:
+            return f"extreme_24h_move_{pct:.0f}pct"
+    except (TypeError, ValueError):
+        pass
+    # Reject pairs with extremely low quote volume (< $50,000 in 24h) — too illiquid
+    try:
+        qv = float(row.get("quote_volume") or 0)
+        if qv < 50_000:
+            return "quote_volume_too_low"
+    except (TypeError, ValueError):
+        pass
+    return ""
+
+
 def is_crypto_perp_symbol(row: dict[str, Any]) -> bool:
-    base = str(row.get("base") or row.get("symbol", "").replace("USDT", "")).upper()
-    denylist = {
-        "AAPL", "AAPLX", "AAOI", "AMD", "AMZN", "COIN", "DRAM", "GOOGL", "INTC", "META", "MRVL", "MSFT", "MSTR", "MU", "NVDA", "O", "SAMSUNG", "SKHYNIX", "SLX", "SNDK", "SOXL", "SPCX", "TSLA", "XAG", "XAU"
-    }
-    return not any(base == item or base.startswith(item) for item in denylist)
+    symbol = str(row.get("symbol", "")).upper()
+    if not symbol.endswith("USDT"):
+        return False
+    return True
 
 
 def klines_to_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
@@ -490,6 +624,10 @@ def build_rest_orderflow_summary(symbol: str, trades: list[dict[str, Any]], orde
         "trade_intensity": "medium" if trade_count >= 60 else "low",
         "average_trade_size": round(total_qty / trade_count, 6) if trade_count else 0,
         "large_trade_count": 0,
+        "large_trade_buy_volume": 0,
+        "large_trade_sell_volume": 0,
+        "large_trade_buy_notional": 0,
+        "large_trade_sell_notional": 0,
         "best_bid": best_bid,
         "best_ask": best_ask,
         "spread": round(best_ask - best_bid, 8) if best_bid and best_ask else 0,
@@ -568,6 +706,39 @@ def liquidity_wall(bids: list[tuple[float, float]], asks: list[tuple[float, floa
 def auto_broadcast_enabled(db, default: bool) -> bool:
     value = get_setting(db, "auto_broadcast", str(default))
     return str(value).lower() in {"1", "true", "yes", "on"}
+
+
+
+
+def _get_active_signal_info(db, symbol: str) -> dict | None:
+    from app.database.models import SignalLog
+    row = db.query(SignalLog).filter(
+        SignalLog.symbol == symbol.upper(),
+        SignalLog.outcome_status.in_(["pending", "hit_tp1"]),
+        SignalLog.decision.in_(["BUY", "SELL"]),
+    ).order_by(SignalLog.id.desc()).first()
+    if not row:
+        return None
+    return {"id": row.id, "decision": row.decision, "confidence": row.confidence}
+
+
+async def _send_watchlist(bot, watchlist: list[dict]) -> None:
+    if not watchlist:
+        return
+    rows = []
+    for w in watchlist:
+        emoji = "🟢" if w["direction"] == "BUY" else "🔴"
+        zone_tag = "IN ZONE" if w.get("within_zone") else "NEAR" if w.get("near_zone") else "S/R"
+        rows.append(f"{emoji} <code>{w['symbol']}</code> {w['direction']} [{zone_tag}] conf={w['confidence']}% | Entry: {w['entry']}\n{w['reason'][:120]}")
+    msg = "<b>Watchlist — Setup Pantau</b>\n\n" + "\n\n".join(rows) + "\n\n<i>Tunggu konfirmasi: engulfing / orderblock / volume spike / BOS sebelum entry.</i>"
+    try:
+        await bot.send_channel(msg)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        await bot.send_admin(msg)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def format_provider_errors(errors: list[dict[str, Any]]) -> str:

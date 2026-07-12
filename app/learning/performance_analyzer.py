@@ -27,6 +27,9 @@ def analyze_performance(db: Session, period: str = "30d") -> dict[str, Any]:
     by_conf = grouped_winrate(closed, lambda o, s: confidence_bucket(s.confidence))
     by_orderflow = grouped_winrate(closed, lambda o, s: s.orderflow_bias or "unknown")
     by_setup = grouped_winrate(closed, lambda o, s: s.setup_type or "unknown")
+    all_conds = by_regime + by_orderflow + by_setup
+    best_conds = sorted(all_conds, key=lambda x: (x["winrate"], x["sample"]), reverse=True)
+    worst_conds = sorted(all_conds, key=lambda x: (x["winrate"], x["sample"]))
     return {
         "period": period,
         "total_signals": total,
@@ -46,8 +49,8 @@ def analyze_performance(db: Session, period: str = "30d") -> dict[str, Any]:
         "by_confidence_range": by_conf,
         "by_orderflow_bias": by_orderflow,
         "by_setup_label": by_setup,
-        "best_conditions": [x["name"] for x in (by_regime + by_orderflow + by_setup) if x["sample"] >= 2 and x["winrate"] >= 60][:5],
-        "worst_conditions": [x["name"] for x in (by_regime + by_orderflow + by_setup) if x["sample"] >= 2 and x["winrate"] <= 40][:5],
+        "best_conditions": [f"{x['name']} ({x['winrate']:.0f}% WR, {x['sample']})" for x in best_conds if x["sample"] >= 2 and x["winrate"] > 0][:3],
+        "worst_conditions": [f"{x['name']} ({x['winrate']:.0f}% WR, {x['sample']})" for x in worst_conds if x["sample"] >= 2][:5],
         "sample_warning": "Small samples are not statistically reliable." if total < 20 else "",
     }
 

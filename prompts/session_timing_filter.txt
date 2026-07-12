@@ -1,0 +1,308 @@
+================================================================================
+PROMPT: SESSION TIMING FILTER — ASIAN / LONDON / NEW YORK
+================================================================================
+Author note: Crypto 24/7 bukan berarti semua jam sama baiknya untuk trading.
+Volume, volatilitas, dan manipulasi sangat berbeda antar sesi. Filter ini mencegah
+entry di jam-jam berisiko tinggi dan memprioritaskan jam-jam dengan karakteristik
+terbaik untuk strategi yang digunakan.
+
+KONSEP INTI:
+  "Timing is everything. Signal yang sama bisa profit di London session
+   dan loss di Asian session, hanya karena karakter volume yang berbeda."
+  Jangan asumsikan setiap jam memiliki probabilitas yang sama.
+
+CATATAN TIMEZONE:
+  Semua waktu menggunakan WIB (UTC+7 / Jakarta time) untuk kemudahan pengguna Indonesia.
+  Konversi jika perlu: UTC = WIB - 7 jam.
+
+================================================================================
+SECTION 1: KARAKTERISTIK SETIAP SESI
+================================================================================
+
+--- ASIAN SESSION (WIB: 06:00 - 15:00) ---
+Jam paling aktif: 08:00 - 12:00 WIB (Tokyo/Singapore market hours)
+
+Karakteristik:
+  + Volatilitas RENDAH pada pair non-Asia (BTC, ETH, major altcoin)
+  + Range harian sering terbentuk di sesi ini (high dan low Asia)
+  + Manipulasi dan stop hunt LEBIH SERING terjadi (volume tipis mudah dimanipulasi)
+  + Breakout dari Asian range sering menjadi setup terbaik di London session
+  - Volume secara keseluruhan 30-50% lebih rendah dari London/NY session
+  - False breakout lebih sering (tidak ada volume untuk konfirmasi)
+
+Strategi terbaik di Asian session:
+  → Range trading (buy low / sell high dalam range Asia)
+  → JANGAN chase breakout — tunggu re-test
+  → Pair yang masih aktif: BTCUSDT, ETHUSDT, BNBUSDT, pair Asia (SUI, APT, dll)
+  → Pair yang cenderung tidur: major altcoin USD-focused
+
+MARKET_SESSION_QUALITY untuk Asian: "low" (untuk trend following)
+                                    "medium" (untuk range trading)
+
+--- LONDON SESSION (WIB: 15:00 - 21:00) ---
+Jam paling aktif: 15:00 - 19:00 WIB
+
+Karakteristik:
+  + Volume MENINGKAT signifikan saat London buka (15:00 WIB)
+  + Sering terjadi "London breakout" — harga menembus range Asia dengan volume tinggi
+  + Trend yang dimulai di London biasanya sustain hingga NY session
+  + Institutional flow mulai masuk — manipulasi berkurang
+  + False breakout berkurang karena volume nyata mendukung pergerakan
+  - Overlap dengan Asia (15:00-16:00) bisa volatile karena transisi
+
+Strategi terbaik di London session:
+  → Trend following setelah Asian range breakout
+  → Breakout entry (STOP order) jika volume mendukung
+  → Momentum trading (MARKET entry) jika ada konfirmasi kuat
+  → Semua major pair aktif
+
+MARKET_SESSION_QUALITY untuk London: "high"
+
+--- NEW YORK SESSION (WIB: 20:00 - 04:00) ---
+Jam paling aktif: 20:00 - 00:00 WIB (overlap London-NY dan NY prime time)
+
+Karakteristik:
+  + Volume tertinggi dalam sehari, terutama 20:00-22:00 WIB (NY open overlap London close)
+  + Major moves dan trend reversals sering terjadi di sini
+  + Data ekonomi AS sering dirilis: CPI, FOMC, Non-Farm Payroll (perhatian ekstra!)
+  + Institutional dan retail activity keduanya tinggi
+  - Setelah 01:00 WIB, volume mulai menurun (NY prime time berakhir)
+  - 02:00 - 05:00 WIB: dead zone (NY larut malam, Asia belum buka)
+
+Strategi terbaik di NY session:
+  → Continuation dari trend London
+  → Reversal setup jika ada catalysts
+  → HINDARI entry di 01:00 - 05:00 WIB (dead zone)
+
+MARKET_SESSION_QUALITY untuk NY (20:00-00:00): "high"
+MARKET_SESSION_QUALITY untuk NY (00:00-04:00): "medium" to "low"
+
+--- DEAD ZONE (WIB: 01:00 - 06:00) ---
+Jam paling tidak aktif: 02:00 - 05:00 WIB
+
+Karakteristik:
+  - Volume paling rendah dalam 24 jam
+  - Manipulasi TERTINGGI (mudah digerakkan dengan modal kecil)
+  - Stop hunt sangat sering terjadi
+  - Signal teknikal paling tidak reliable
+  - Spread bisa melebar di beberapa pair
+
+Strategi di Dead Zone:
+  → TIDAK DIREKOMENDASIKAN untuk entry baru
+  → Jika sudah ada posisi: maintain dengan trailing stop
+  → WAIT untuk semua setup baru kecuali sangat kuat
+
+MARKET_SESSION_QUALITY untuk Dead Zone: "very_low"
+
+================================================================================
+SECTION 2: SESSION TIMING MATRIX
+================================================================================
+
+Waktu (WIB)  | Sesi                | Quality  | Strategi
+-------------|---------------------|----------|-----------------------------------
+05:00-07:00  | Pre-Asia/Transisi   | low      | Hindari entry baru
+07:00-12:00  | Asian Peak          | medium   | Range trading only
+12:00-14:00  | Asian Late          | low      | Hindari entry, monitor setup
+14:00-15:00  | Pre-London          | medium   | Siapkan untuk London breakout
+15:00-19:00  | London Prime        | HIGH     | Trend following, breakout entry ✅
+19:00-20:00  | London Late/NY Pre  | high     | Continuation trades
+20:00-23:00  | NY Prime            | HIGH     | Semua strategi aktif ✅
+23:00-01:00  | NY Mid              | medium   | Selektif, volume mulai turun
+01:00-05:00  | Dead Zone           | very_low | HINDARI entry baru ❌
+05:00-07:00  | Pre-Asia            | low      | Tidak direkomendasikan
+
+================================================================================
+SECTION 3: ADJUSTMENT CONFIDENCE BERDASARKAN SESI
+================================================================================
+
+Hitung session_confidence_adjustment berdasarkan waktu saat ini:
+
+LONDON PRIME (15:00-19:00 WIB):
+  + 8 confidence untuk semua BUY/SELL signal
+  Alasan: volume institutional tinggi, signal lebih reliable
+
+NY PRIME (20:00-23:00 WIB):
+  + 8 confidence untuk semua BUY/SELL signal
+  Alasan: volume tertinggi, institutional aktif
+
+OVERLAP LONDON-NY (19:00-21:00 WIB):
+  + 10 confidence (bonus lebih karena volume 2 sesi gabung)
+  Alasan: ini adalah window terbaik untuk trading crypto
+
+ASIAN PEAK (07:00-12:00 WIB):
+  - 5 confidence untuk trend following signal
+  + 3 confidence untuk range trading signal (buy support, sell resistance range)
+  Alasan: volume rendah, trend lebih sering palsu
+
+ASIAN LATE / PRE-LONDON (12:00-15:00 WIB):
+  - 8 confidence
+  Alasan: dead period sebelum London buka, volume sangat tipis
+
+DEAD ZONE (01:00-05:00 WIB):
+  - 15 confidence
+  Jika confidence setelah adjustment < min_confidence: wajib return WAIT
+  Alasan: manipulasi tinggi, signal sangat tidak reliable
+
+NY LATE (23:00-01:00 WIB):
+  - 3 confidence
+  Alasan: volume mulai turun, tidak sebaik NY prime time
+
+================================================================================
+SECTION 4: SPECIAL RULES PER SESI
+================================================================================
+
+ATURAN ASIAN SESSION:
+  1. Jangan entry MARKET order — gunakan LIMIT saja
+  2. Stop loss harus lebih lebar (tambah 20% dari normal karena manipulasi)
+  3. Jika volume_spike terjadi di Asian session: waspada, bisa manipulasi atau stop hunt
+  4. Pair dengan likuiditas tinggi (rank ≤ 10) lebih aman dari pair lower rank
+
+ATURAN DEAD ZONE:
+  1. Wajib return WAIT untuk semua signal baru
+  2. Exception: jika ada liquidation cascade yang sedang terjadi (bisa counter-trade)
+  3. Exception: jika confidence sangat tinggi (>85) dengan multiple konfirmasi
+
+ATURAN LONDON/NY SESSION:
+  1. Breakout pada 15:00-16:00 WIB (London open) sangat signifikan — biasanya valid
+  2. Jika ada breakout pada 20:30 WIB: sering dipicu oleh data ekonomi AS
+     → verifikasi apakah ada news yang scheduled
+  3. Volatilitas tinggi: gunakan stop loss yang lebih normal (tidak perlu ekstra lebar)
+
+LONDON BREAKOUT PATTERN (Very Reliable):
+  - Setup: Asian session membentuk range yang jelas (high dan low)
+  - Trigger: London session break di atas Asian high (BUY) atau di bawah Asian low (SELL)
+  - Volume: harus ada volume spike saat breakout
+  - Entry: STOP order tepat di atas Asian high / di bawah Asian low
+  - Target: 1-2x ukuran Asian range sebagai TP
+  - Win rate historis: 60-70% jika dieksekusi dengan benar
+
+================================================================================
+SECTION 5: DETEKSI SESI OTOMATIS
+================================================================================
+
+Cara menghitung sesi dari timestamp (WIB = UTC+7):
+
+current_hour_wib = (current_utc_hour + 7) % 24
+
+if 15 <= current_hour_wib < 21:
+    session = "london"
+    session_quality = "high"
+elif 20 <= current_hour_wib < 23 or (current_hour_wib == 23):
+    session = "new_york"
+    session_quality = "high"
+elif 7 <= current_hour_wib < 12:
+    session = "asian_peak"
+    session_quality = "medium"
+elif (current_hour_wib >= 1 and current_hour_wib < 5):
+    session = "dead_zone"
+    session_quality = "very_low"
+elif (current_hour_wib >= 23 or current_hour_wib == 0):
+    session = "ny_late"
+    session_quality = "medium"
+else:
+    session = "transition"
+    session_quality = "low"
+
+Overlap bonus:
+if 19 <= current_hour_wib < 21:
+    session = "london_ny_overlap"
+    session_quality = "highest"
+
+================================================================================
+SECTION 6: AI DECISION RULES
+================================================================================
+
+WAJIB RETURN WAIT jika:
+  - session = "dead_zone" (01:00-05:00 WIB)
+    → kecuali confidence >= 82 dengan 3+ konfirmasi
+  - session = "transition" atau "asian_late" (12:00-15:00 WIB)
+    → kecuali ada setup zona reaction yang sudah terkonfirmasi (lihat zone_reaction prompt)
+
+PREFER LIMIT ENTRY (bukan MARKET) jika:
+  - session = "asian_peak"
+  - session = "ny_late"
+
+MARKET ENTRY DIPERBOLEHKAN (tambah confidence) jika:
+  - session = "london_ny_overlap"
+  - session = "london" atau "new_york"
+  - Ada volume spike yang mengkonfirmasi
+
+REASON FIELD harus menyebutkan:
+  - Nama sesi saat ini
+  - Apakah sesi mendukung atau mengurangi confidence
+  - Jika dead zone: sebutkan bahwa analisa menunggu sesi yang lebih aktif
+
+================================================================================
+SECTION 7: OUTPUT JSON FORMAT TAMBAHAN
+================================================================================
+
+{
+  "session_context": {
+    "current_session": "asian | london | new_york | london_ny_overlap | dead_zone | transition",
+    "session_quality": "highest | high | medium | low | very_low",
+    "hour_wib": 0,
+    "confidence_adjustment": 0,
+    "entry_type_recommendation": "market_allowed | limit_only | wait",
+    "session_warning": "",
+    "london_breakout_setup": false,
+    "asian_range_high": 0.0,
+    "asian_range_low": 0.0
+  }
+}
+
+================================================================================
+SECTION 8: BONUS — LONDON BREAKOUT DETECTOR
+================================================================================
+
+Untuk mengoptimalkan session timing, tambahkan logika khusus ini:
+
+LANGKAH DETEKSI ASIAN RANGE:
+  1. Ambil candle H1 dari 07:00 WIB sampai 14:00 WIB
+  2. asian_high = max(high semua candle dalam periode itu)
+  3. asian_low = min(low semua candle dalam periode itu)
+  4. asian_range_size = asian_high - asian_low
+  5. Jika asian_range_size < 0.5% dari harga → range terlalu sempit, skip
+  6. Jika asian_range_size > 3% dari harga → range terlalu lebar, tidak reliable
+
+TRIGGER LONDON BREAKOUT:
+  - Saat ini antara 15:00-17:00 WIB (London fresh open)
+  - current_price > asian_high * 1.001 (breakout 0.1% di atas Asian high)
+    AND volume_spike H1 = true → BUY setup kuat
+  - current_price < asian_low * 0.999 (breakdown 0.1% di bawah Asian low)
+    AND volume_spike H1 = true → SELL setup kuat
+
+TARGET untuk London Breakout:
+  - TP1 = entry + (asian_range_size * 0.75)
+  - TP2 = entry + (asian_range_size * 1.5)
+  - SL = asian_high (untuk BUY) atau asian_low (untuk SELL) minus buffer kecil
+
+================================================================================
+SECTION 9: INTEGRASI KE BOT
+================================================================================
+
+1. Di scheduler.py atau scanner.py:
+   Hitung current_session berdasarkan waktu saat scan dimulai
+   Sertakan session_context dalam setiap payload AI
+
+2. Di setup_detector.py:
+   Tambahkan fungsi get_current_session(timezone="Asia/Jakarta")
+   Return session_quality dan confidence_adjustment
+   Jika session = "dead_zone": return None, "dead_zone_session", tf langsung
+     (skip analisa, hemat API call ke DeepSeek)
+
+3. Di prompt AI (SYSTEM_PROMPT):
+   Tambahkan rule: "If session_context.session_quality is 'very_low',
+   return WAIT unless confidence >= 82."
+
+4. HEMAT TOKEN/API CALL:
+   Jika session = "dead_zone": jangan kirim ke DeepSeek sama sekali
+   Log sebagai "session_filtered" bukan "decision_wait"
+   Ini bisa hemat 30-50% DeepSeek API calls jika bot jalan 24 jam
+
+5. Untuk London Breakout:
+   Simpan Asian high/low di DB atau memory pada jam 14:00-15:00 WIB
+   Cek di setiap scan antara 15:00-17:00 WIB apakah ada breakout
+
+================================================================================
+END OF PROMPT
+================================================================================

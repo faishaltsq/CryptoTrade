@@ -114,7 +114,8 @@ def command_keyboard() -> dict:
             [{"text": "Learning Status", "callback_data": "cmd:learning_status"}, {"text": "Orderflow Top", "callback_data": "cmd:orderflow_top"}],
             [{"text": "Settings", "callback_data": "cmd:settings"}, {"text": "Last Scan", "callback_data": "cmd:last_scan"}],
             [{"text": "Broadcast ON", "callback_data": "cmd:broadcast_on"}, {"text": "Broadcast OFF", "callback_data": "cmd:broadcast_off"}],
-            [{"text": "Diagnose Market", "callback_data": "cmd:diagnose_market"}, {"text": "Help", "callback_data": "cmd:help"}],
+            [{"text": "Diagnose Market", "callback_data": "cmd:diagnose_market"}],
+            [{"text": "Help", "callback_data": "cmd:help"}],
         ]
     }
 
@@ -185,6 +186,11 @@ def handle_command(db: Session, text: str) -> tuple[str, str | None]:
         if result.startswith("nudge_approve:"):
             return f"<b>Approving signal #{parts[1]}...</b>", result
         return result, None
+    if cmd == "/watchlist":
+        from app.watchlist.manager import refresh_all, force_refresh
+        if len(parts) > 1 and parts[1] == "clear":
+            return "<b>Watchlist cleared</b>", "watchlist_clear"
+        return "<b>Watchlist refreshed</b>", "watchlist_refresh"
     if cmd == "/scan_now":
         return "<b>🔎 Manual Scan Started</b>\n\nBot sedang scan market sekarang. Hasil akan dikirim setelah scan selesai.", "scan_now"
     if cmd == "/pairs":

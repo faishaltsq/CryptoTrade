@@ -1,0 +1,361 @@
+import logging
+from datetime import datetime, timedelta, timezone
+from time import time
+from typing import Any
+
+from app.config import get_settings
+from app.database.session import SessionLocal
+from app.database import repository
+from app.watchlist.models import SCORE_WEIGHTS, MARKET_STATES, MARKET_STATE_TRANSITIONS
+
+logger = logging.getLogger(__name__)
+
+
+def calculate_priority(ai_response: dict, candidate: dict) -> int:
+    conf = int(ai_response.get("confidence") or 0)
+    risk = ai_response.get("risk", {}) or {}
+    rr = float(risk.get("risk_reward") or 0)
+    of = candidate.get("orderflow", {}) or {}
+    orderflow_score = int(of.get("orderflow_score") or 0)
+    tfs = candidate.get("timeframes", {})
+    m15 = tfs.get("M15", {})
+    h1 = tfs.get("H1", {})
+    vol_ratio = max(float(m15.get("volume_ratio") or 0), float(h1.get("volume_ratio") or 0))
+    vol_ratio = min(vol_ratio, 3.0)
+    momentum_score = 100 if (m15.get("volume_spike") and m15.get("cvd_divergence") != "none") else 60 if m15.get("volume_spike") else 30
+    htf = tfs.get("H4", {}).get("trend", "")
+    htf_score = 100 if htf == candidate.get("candidate_direction", "").lower() else 50 if htf == "ranging" else 20
+    quality_mult = 0.8 if conf and rr < 1.5 else 1.0
+    score = (
+        conf * SCORE_WEIGHTS["confidence"] / 100
+        + min(abs(orderflow_score), 20) * SCORE_WEIGHTS["orderflow"] / 20
+        + vol_ratio / 3.0 * SCORE_WEIGHTS["volume"]
+        + min(rr, 5.0) / 5.0 * SCORE_WEIGHTS["risk_reward"]
+        + momentum_score / 100 * SCORE_WEIGHTS["momentum"]
+        + htf_score / 100 * SCORE_WEIGHTS["htf_context"]
+    )
+    return int(max(1, min(99, score * quality_mult)))
+
+
+def compute_opportunity_score(item) -> int:
+    conf = item.confidence or 0
+    rr = item.risk_reward or 0
+    priority = item.priority_score or 0
+    dist = item.trigger_distance_pct or 999
+    trigger_score = 15 if dist < 0.5 else 10 if dist < 2.0 else 5 if dist < 5.0 else 0
+    return int(
+        conf * 0.30
+        + priority * 0.35
+        + min(rr, 5.0) / 5.0 * 15
+        + trigger_score
+        + (10 if item.analysis_count > 3 else 0)
+    )
+
+
+def determine_market_state(ai_response: dict, candidate: dict, previous_state: str) -> str:
+    decision = ai_response.get("decision", "")
+    conf = int(ai_response.get("confidence") or 0)
+    tfs = candidate.get("timeframes", {})
+    h1 = tfs.get("H1", {})
+    m15 = tfs.get("M15", {})
+    h4 = tfs.get("H4", {})
+    vol_spike = m15.get("volume_spike") or h1.get("volume_spike")
+    cvd_div = h1.get("cvd_divergence", "none")
+    obv_trend = h1.get("obv_trend", "flat")
+    at_support = h1.get("at_support", False)
+    at_resistance = h1.get("at_resistance", False)
+    h4_trend = h4.get("trend", "")
+
+    if decision in {"BUY", "SELL"} and conf >= 65:
+        return "BREAKOUT_READY" if decision == "BUY" else "BREAKDOWN_READY"
+
+    if obv_trend == "rising_divergent" and cvd_div == "bullish":
+        return "ACCUMULATING"
+
+    if obv_trend == "falling_divergent" and cvd_div == "bearish" and at_resistance:
+        return "ACCUMULATING"
+
+    if h4_trend in ("bullish", "bearish") and vol_spike:
+        if at_support or at_resistance:
+            return "BREAKOUT_READY" if h4_trend == "bullish" else "BREAKDOWN_READY"
+        return "TRENDING"
+
+    if at_support and not at_resistance and (obv_trend == "rising" or cvd_div == "bullish"):
+        return "PULLBACK_READY"
+
+    if at_resistance and not at_support:
+        return "PULLBACK_READY"
+
+    if m15.get("volume_trend") == "falling" and h1.get("volume_trend") == "falling":
+        return "CHOPPY" if conf < 50 else previous_state
+
+    if conf < 40:
+        return "WEAK"
+
+    allowed = MARKET_STATE_TRANSITIONS.get(previous_state, set())
+    if previous_state in allowed:
+        return previous_state
+    return "WATCHING"
+
+
+def calculate_probability(ai_response: dict, candidate: dict) -> int:
+    conf = int(ai_response.get("confidence") or 0)
+    risk = ai_response.get("risk", {}) or {}
+    rr = float(risk.get("risk_reward") or 0)
+    tfs = candidate.get("timeframes", {})
+    h1 = tfs.get("H1", {})
+    m15 = tfs.get("M15", {})
+    vol_ratio = float(m15.get("volume_ratio") or 1)
+    cvd_div = h1.get("cvd_divergence", "none")
+    at_sr = h1.get("at_support") or h1.get("at_resistance")
+    prob = min(conf + 10, 90) if conf > 0 else 35
+    if rr >= 2.0:
+        prob += 5
+    if vol_ratio >= 1.5:
+        prob += 5
+    if cvd_div != "none":
+        prob += 3
+    if at_sr:
+        prob += 3
+    return max(10, min(95, prob))
+
+
+def prob_change_reason(prev_prob: int, curr_prob: int, ai_response: dict, candidate: dict) -> str:
+    delta = curr_prob - prev_prob
+    tfs = candidate.get("timeframes", {})
+    m15 = tfs.get("M15", {})
+    h1 = tfs.get("H1", {})
+    reasons = []
+    if delta > 0:
+        if m15.get("volume_spike"):
+            reasons.append("volume increasing")
+        if h1.get("cvd_divergence") != "none":
+            reasons.append("orderflow improving")
+        if h1.get("at_support") or h1.get("at_resistance"):
+            reasons.append("near key level")
+    else:
+        if m15.get("volume_trend") == "falling":
+            reasons.append("volume fading")
+        if int(ai_response.get("confidence") or 0) < 40:
+            reasons.append("weak confidence")
+        if not h1.get("at_support") and not h1.get("at_resistance"):
+            reasons.append("mid-zone drift")
+    return ", ".join(reasons[:3]) if reasons else "reevaluated"
+
+
+def compute_trigger_distance(candidate: dict) -> float:
+    zone = candidate.get("zone_analysis", {})
+    tfs = candidate.get("timeframes", {})
+    h1 = tfs.get("H1", {})
+    dist = zone.get("distance_to_demand_pct", zone.get("distance_to_supply_pct", 0))
+    if dist > 0:
+        return round(dist, 2)
+    if h1.get("at_support") or h1.get("at_resistance"):
+        return 0.0
+    return 999.0
+
+
+def update_from_scan(symbol: str, direction: str, ai_response: dict, candidate: dict, ok: bool, is_duplicate: bool, zone_context: dict) -> None:
+    db = SessionLocal()
+    try:
+        existing = db.query(repository.WatchlistItem).filter(
+            repository.WatchlistItem.symbol == symbol.upper(),
+            repository.WatchlistItem.direction == direction.upper()
+        ).first()
+
+        previous_prob = existing.previous_probability if existing else 0
+        previous_state = existing.market_state if existing else "WATCHING"
+        prev_count = existing.analysis_count if existing else 0
+
+        priority = calculate_priority(ai_response, candidate)
+        market_state = determine_market_state(ai_response, candidate, previous_state)
+        current_prob = calculate_probability(ai_response, candidate)
+        delta = current_prob - previous_prob if previous_prob > 0 else 0
+        prob_reason = prob_change_reason(previous_prob, current_prob, ai_response, candidate) if previous_prob > 0 else "initial"
+        trigger_dist = compute_trigger_distance(candidate)
+        risk = ai_response.get("risk", {}) or {}
+
+        state = "WATCHING"
+        if ai_response.get("decision") in {"BUY", "SELL"} and ok:
+            state = "READY"
+        elif current_prob < 30:
+            state = "WEAK"
+
+        reason = (ai_response.get("reason") or "")[:150]
+        expiry = datetime.now(timezone.utc) + timedelta(hours=6)
+        entry_zone = risk.get("entry_zone", "")
+
+        row = repository.upsert_watchlist_item(db, symbol, direction,
+            market_state=market_state,
+            state=state,
+            confidence=int(ai_response.get("confidence") or 0),
+            priority_score=priority,
+            quality_score=max(0, min(100, priority)),
+            risk_reward=float(risk.get("risk_reward") or 0),
+            current_price=float(candidate.get("current_price") or 0),
+            entry_zone=str(entry_zone),
+            trigger_distance_pct=trigger_dist,
+            previous_probability=current_prob,
+            probability_delta=delta,
+            prob_change_reason=prob_reason,
+            analysis_count=prev_count + 1,
+            reason=reason,
+            expires_at=expiry,
+        )
+
+        opportunity = compute_opportunity_score(row)
+        row.opportunity_score = opportunity
+        db.commit()
+
+        logger.info("Watchlist updated symbol=%s direction=%s market=%s state=%s prob=%d (Δ%+d) opp=%d",
+                     symbol, direction, market_state, state, current_prob, delta, opportunity)
+    except Exception:  # noqa: BLE001
+        logger.exception("Watchlist update failed symbol=%s", symbol)
+    finally:
+        db.close()
+
+
+_LAST_REFRESH = 0.0
+_REFRESH_DEBOUNCE = 30
+_CACHED_MSG_ID: int | None = None
+_CACHED_CHAT_ID: str = ""
+
+
+async def refresh_all(bot) -> None:
+    global _LAST_REFRESH, _CACHED_MSG_ID, _CACHED_CHAT_ID
+    now = time()
+    if now - _LAST_REFRESH < _REFRESH_DEBOUNCE:
+        return
+    _LAST_REFRESH = now
+    if not _CACHED_MSG_ID:
+        _load_cached_msg_id()
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    stored_date = _get_stored_date()
+    if stored_date and stored_date != today:
+        _CACHED_MSG_ID = None
+    db = SessionLocal()
+    try:
+        repository.remove_expired_watchlist(db)
+
+        items = repository.get_active_watchlist(db)
+        for item in items:
+            item.opportunity_score = compute_opportunity_score(item)
+        db.commit()
+
+        ready = [i for i in items if i.state == "READY"]
+        watching = [i for i in items if i.state == "WATCHING"]
+        weak = [i for i in items if i.state == "WEAK"]
+
+        if ready:
+            ready.sort(key=lambda x: x.opportunity_score, reverse=True)
+        if watching:
+            watching.sort(key=lambda x: x.opportunity_score, reverse=True)
+        if weak:
+            weak.sort(key=lambda x: x.opportunity_score, reverse=True)
+
+        msg = _render_message(ready, watching, weak)
+        settings = get_settings()
+        if not _CACHED_CHAT_ID:
+            _CACHED_CHAT_ID = settings.telegram_channel_chat_id or settings.telegram_admin_chat_id
+
+        if _CACHED_MSG_ID and _CACHED_CHAT_ID:
+            edited = await _edit_msg(bot, _CACHED_CHAT_ID, _CACHED_MSG_ID, msg)
+            if not edited:
+                _CACHED_MSG_ID = None
+        if not _CACHED_MSG_ID and _CACHED_CHAT_ID:
+            mid = await _send_msg(bot, _CACHED_CHAT_ID, msg)
+            if mid:
+                _CACHED_MSG_ID = mid
+                today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                repository.set_setting(db, "watchlist_message_id", str(mid))
+                repository.set_setting(db, "watchlist_chat_id", _CACHED_CHAT_ID)
+                repository.set_setting(db, "watchlist_date", today)
+        logger.info("Watchlist refreshed: READY=%d WATCHING=%d WEAK=%d", len(ready), len(watching), len(weak))
+    except Exception:  # noqa: BLE001
+        logger.exception("Watchlist refresh failed")
+    finally:
+        db.close()
+
+
+async def force_refresh(bot) -> None:
+    global _CACHED_MSG_ID
+    _CACHED_MSG_ID = None
+    db = SessionLocal()
+    try:
+        repository.clear_all_watchlist(db)
+    finally:
+        db.close()
+    await refresh_all(bot)
+
+
+def _load_cached_msg_id() -> None:
+    global _CACHED_MSG_ID, _CACHED_CHAT_ID
+    db = SessionLocal()
+    try:
+        wl_id = repository.get_setting(db, "watchlist_message_id", "")
+        wl_chat = repository.get_setting(db, "watchlist_chat_id", "")
+        if wl_id and wl_id.isdigit():
+            _CACHED_MSG_ID = int(wl_id)
+        if wl_chat:
+            _CACHED_CHAT_ID = wl_chat
+    except Exception:  # noqa: BLE001
+        pass
+    finally:
+        db.close()
+
+
+def _get_stored_date() -> str:
+    db = SessionLocal()
+    try:
+        return repository.get_setting(db, "watchlist_date", "")
+    finally:
+        db.close()
+
+
+def _render_message(ready: list, watching: list, weak: list) -> str:
+    now = datetime.now(timezone.utc).strftime("%H:%M UTC")
+    lines = [f"<b>Live Watchlist</b>  —  {now}"]
+    lines.append("━" * 30)
+
+    for label, items in [("READY", ready), ("WATCHING", watching), ("WEAK", weak)]:
+        if not items:
+            continue
+        emoji = {"READY": "🔥", "WATCHING": "👀", "WEAK": "⚠"}[label]
+        lines.append(f"{emoji} <b>{label}</b>")
+        for i in items:
+            dir_emoji = "🟢" if i.direction == "BUY" else "🔴"
+            delta_str = f" Δ{'+' if i.probability_delta > 0 else ''}{i.probability_delta}% " if i.probability_delta != 0 else ""
+            market_tag = f"[{i.market_state}] " if i.market_state and i.market_state != "WATCHING" else ""
+            prob_str = f"{i.previous_probability}%" if i.previous_probability else f"{i.confidence}%"
+            trigger = f" {i.trigger_distance_pct:.1f}%" if 0 < i.trigger_distance_pct < 100 else " now" if i.trigger_distance_pct == 0 else ""
+            lines.append(f"{dir_emoji} <code>{i.symbol}</code> {market_tag}op{i.opportunity_score} {prob_str}{delta_str}| P{i.priority_score} |{trigger}")
+            if i.prob_change_reason:
+                lines.append(f"  {i.prob_change_reason}")
+            lines.append(f"  {_short_reason(i.reason)}")
+        lines.append("")
+
+    total = len(ready) + len(watching) + len(weak)
+    lines.append(f"<b>Total:</b> {total}")
+    return "\n".join(lines)
+
+
+def _short_reason(text: str) -> str:
+    return (text or "-")[:80].replace("\n", " ").strip()
+
+
+async def _send_msg(bot, chat_id: str, text: str) -> int | None:
+    try:
+        ids = await bot.send_message(chat_id, text)
+        return ids[0] if ids else None
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Watchlist send failed: %s", e)
+        return None
+
+
+async def _edit_msg(bot, chat_id: str, msg_id: int, text: str) -> bool:
+    try:
+        await bot._send_with_retry({"chat_id": chat_id, "message_id": msg_id, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}, "editMessageText")
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Watchlist edit failed msg_id=%d: %s", msg_id, e)
+        return False

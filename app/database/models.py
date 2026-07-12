@@ -175,6 +175,10 @@ class OrderflowSnapshot(Base):
     trade_intensity = Column(String(16), default="low")
     average_trade_size = Column(Float, default=0.0)
     large_trade_count = Column(Integer, default=0)
+    large_trade_buy_volume = Column(Float, default=0.0)
+    large_trade_sell_volume = Column(Float, default=0.0)
+    large_trade_buy_notional = Column(Float, default=0.0)
+    large_trade_sell_notional = Column(Float, default=0.0)
     best_bid = Column(Float, default=0.0)
     best_ask = Column(Float, default=0.0)
     spread = Column(Float, default=0.0)
@@ -195,6 +199,33 @@ class OrderflowSnapshot(Base):
     flow_interpretation = Column(Text, default="")
     raw_summary_json = Column(Text, default="{}")
     created_at = Column(DateTime(timezone=True), default=utc_now)
+
+
+class WatchlistItem(Base):
+    __tablename__ = "watchlist_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    symbol = Column(String(32), index=True)
+    direction = Column(String(8), default="")
+    market_state = Column(String(24), default="WATCHING")
+    setup_type = Column(String(32), default="")
+    confidence = Column(Integer, default=0)
+    quality_score = Column(Integer, default=0)
+    priority_score = Column(Integer, default=0)
+    opportunity_score = Column(Integer, default=0)
+    risk_reward = Column(Float, default=0.0)
+    current_price = Column(Float, default=0.0)
+    entry_zone = Column(String(32), default="")
+    trigger_distance_pct = Column(Float, default=0.0)
+    state = Column(String(16), default="WATCHING", index=True)
+    previous_probability = Column(Integer, default=0)
+    probability_delta = Column(Integer, default=0)
+    prob_change_reason = Column(String(120), default="")
+    analysis_count = Column(Integer, default=1)
+    reason = Column(Text, default="")
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class Setting(Base):

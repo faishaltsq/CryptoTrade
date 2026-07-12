@@ -556,6 +556,9 @@ def format_cache_stats_message(stats: dict[str, Any]) -> str:
 TTL: 15m=15min, 1h=1jam, 4h=4jam, 1d=24jam"""
 
 
+
+
+
 def format_broadcast_on_message(settings: dict[str, Any]) -> str:
     return f"""<b>🟢 Auto Broadcast Enabled</b>
 
@@ -666,6 +669,45 @@ def _trim_orderflow(of: dict[str, Any], signal: dict[str, Any]) -> str:
     return interp
 
 
+def _format_whale_activity(of: dict[str, Any]) -> str:
+    count = int(of.get("large_trade_count") or 0)
+    if count == 0:
+        return ""
+    buy_notional = float(of.get("large_trade_buy_notional") or 0)
+    sell_notional = float(of.get("large_trade_sell_notional") or 0)
+    lines = [f"<b>Whale:</b> {count} large trades"]
+    if buy_notional > 0:
+        lines.append(f"Buy: ${compact_number(buy_notional)}")
+    if sell_notional > 0:
+        lines.append(f"Sell: ${compact_number(sell_notional)}")
+    if buy_notional > sell_notional * 1.5:
+        lines.append("→ Whale buying")
+    elif sell_notional > buy_notional * 1.5:
+        lines.append("→ Whale selling")
+    return "\n".join(lines)
+
+
+def _tp2_prob_label(probability: int | float | str) -> str:
+    try:
+        p = int(float(probability))
+    except (ValueError, TypeError):
+        return ""
+    if p >= 70:
+        return f" <b>(TP2: {p}%)</b>"
+    if p > 0:
+        return f" (TP2: {p}%)"
+    return ""
+
+
+def _trim_orderflow(of: dict[str, Any], signal: dict[str, Any]) -> str:
+    interp = str(of.get("flow_interpretation") or (signal.get("orderflow", {}) or {}).get("interpretation") or "")
+    if not interp:
+        return ""
+    if len(interp) > 240:
+        interp = interp[:240].rsplit(".", 1)[0] + "."
+    return interp
+
+
 def format_signal_candidate_admin_message(signal: dict[str, Any]) -> str:
     risk = signal.get("risk", {}) or {}
     market = signal.get("market_summary", {}) or {}
@@ -674,7 +716,7 @@ def format_signal_candidate_admin_message(signal: dict[str, Any]) -> str:
     order_label = signal_order_label(signal)
     validity = format_signal_validity(signal)
     warning_badge = _header_warning_badge(signal)
-    return f"""<b>{side_emoji(decision)} {h(signal.get('symbol'))} — {h(decision)} {h(order_label)}{warning_badge}</b>
+    return f"""<b>{side_emoji(decision)} <code>{h(signal.get('symbol'))}</code> — {h(decision)} {h(order_label)}{warning_badge}</b>
 
 {SEP}
 <b>Confidence:</b> {h(signal.get('confidence'))}%
@@ -691,7 +733,7 @@ HTF: {h(market.get('higher_timeframe_bias', 'neutral'))} | LTF: {h(market.get('l
 {format_entry_zone(risk.get('entry_zone'))}
 SL: <code>{h(risk.get('stop_loss'))}</code>
 TP1: <code>{h(risk.get('take_profit_1'))}</code>
-TP2: <code>{h(risk.get('take_profit_2'))}</code>
+TP2: <code>{h(risk.get('take_profit_2'))}</code> {_tp2_prob_label(risk.get('tp2_probability', 0))}
 {validity}
 
 {SEP}
@@ -704,6 +746,7 @@ TP2: <code>{h(risk.get('take_profit_2'))}</code>
 
 {SEP}
 <b>Orderflow:</b> {h(of.get('orderflow_bias', '-'))} | confirm: {h('yes' if (signal.get('orderflow', {}) or {}).get('confirmation') else 'no')}
+{_format_whale_activity(of)}
 {_trim_orderflow(of, signal)}"""
 
 
@@ -715,7 +758,7 @@ def format_signal_broadcast_channel_message(signal: dict[str, Any]) -> str:
     setup_label = signal.get("setup_type", "no_trade").replace("_", " ").title()
     market = signal.get("market_summary", {}) or {}
     context = market.get("main_reason", "") or of_line
-    return f"""<b>{side_emoji(decision)} {h(signal.get('symbol'))} — {h(decision)} {h((risk.get('entry_type') or 'limit').upper())}</b>
+    return f"""<b>{side_emoji(decision)} <code>{h(signal.get('symbol'))}</code> — {h(decision)} {h((risk.get('entry_type') or 'limit').upper())}</b>
 
 {SEP}
 <b>Entry Zone</b>
@@ -726,7 +769,7 @@ def format_signal_broadcast_channel_message(signal: dict[str, Any]) -> str:
 
 <b>Take Profit</b>
 TP1: <code>{h(risk.get('take_profit_1'))}</code>
-TP2: <code>{h(risk.get('take_profit_2'))}</code>
+TP2: <code>{h(risk.get('take_profit_2'))}</code>{_tp2_prob_label(risk.get('tp2_probability', 0))}
 
 {SEP}
 <b>Confidence:</b> {h(signal.get('confidence'))}%

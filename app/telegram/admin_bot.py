@@ -67,6 +67,33 @@ class TelegramBot:
                     message_ids.append(mid)
         return message_ids
 
+    async def edit_message(self, chat_id: str, message_id: int, text: str) -> bool:
+        try:
+            await self._send_with_retry({"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}, "editMessageText")
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
+    def send_message_sync(self, chat_id: str, text: str) -> list[int]:
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                return asyncio.run_coroutine_threadsafe(self.send_message(chat_id, text), loop).result(timeout=15)
+            return asyncio.run(self.send_message(chat_id, text))
+        except Exception:  # noqa: BLE001
+            return []
+
+    def edit_message_sync(self, chat_id: str, message_id: int, text: str) -> bool:
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                return asyncio.run_coroutine_threadsafe(self.edit_message(chat_id, message_id, text), loop).result(timeout=15)
+            return asyncio.run(self.edit_message(chat_id, message_id, text))
+        except Exception:  # noqa: BLE001
+            return False
+
     async def _send_with_retry(self, payload: dict[str, Any], method: str = "sendMessage") -> dict[str, Any]:
         last_error = None
         for attempt, delay in enumerate([0.0] + list(_RETRY_DELAYS)):

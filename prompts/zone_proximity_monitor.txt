@@ -1,0 +1,443 @@
+================================================================================
+PROMPT: ZONE PROXIMITY MONITOR — REAL-TIME S&D / S&R SCANNER (EVERY MINUTE)
+================================================================================
+Author note: Fitur ini adalah "zone watcher" yang berjalan setiap menit — mirip
+volume_spike_monitor.py yang sudah ada, tapi fokusnya berbeda: bukan menunggu
+volume spike, melainkan menunggu harga masuk atau mendekati area demand/supply
+yang valid. Saat kondisi terpenuhi, AI diaktifkan untuk validasi entry.
+
+ARSITEKTUR:
+  File baru: app/analysis/zone_proximity_monitor.py
+  Pola: identik dengan volume_spike_monitor.py (while True loop, cooldown, AI call)
+  Trigger: bukan volume ratio, tapi distance_to_zone <= threshold
+  Frekuensi: setiap 60 detik (bisa diatur via env ZONE_MONITOR_INTERVAL_SECONDS)
+
+KONSEP INTI:
+  "Scanner 10 menit untuk sinyal baru, monitor 1 menit untuk entri presisi."
+  Scanner utama (scan_job) mencari kandidat dari 150 pair secara luas.
+  Zone Monitor berjalan paralel, memantau pair teratas setiap menit,
+  dan langsung trigger AI analisa ketika harga masuk area kritis.
+
+================================================================================
+SECTION 1: DEFINISI ZONA YANG DIPANTAU
+================================================================================
+
+SUPPLY & DEMAND ZONE (S&D) — Berbasis Impuls:
+  Demand Zone:
+    - Terbentuk dari base candle (flat/kecil) + impuls bullish yang kuat
+    - Zone boundaries: high dan low dari candle base sebelum impuls
+    - Valid: zona belum diuji lebih dari 2x
+    - Data source: detect_demand_supply_zones() dari market_structure.py (sudah ada)
+      → demand_zone_low, demand_zone_high, demand_zone_test_count
+
+  Supply Zone:
+    - Terbentuk dari base candle + impuls bearish yang kuat
+    - Zone boundaries: high dan low dari base candle sebelum impuls turun
+    - Valid: zona belum diuji lebih dari 2x
+    - Data source: detect_demand_supply_zones()
+      → supply_zone_low, supply_zone_high, supply_zone_test_count
+
+SUPPORT & RESISTANCE (S&R) — Berbasis Swing Points:
+  Support:
+    - Swing low yang paling relevan dari H1 atau H4
+    - Diperkuat jika diuji 2-3x tanpa ditembus
+    - Data source: analyze_structure() dari market_structure.py (sudah ada)
+      → support field
+
+  Resistance:
+    - Swing high paling relevan dari H1 atau H4
+    - Diperkuat jika diuji 2-3x tanpa ditembus
+    - Data source: analyze_structure()
+      → resistance field
+
+VALIDITAS ZONA:
+  Zona VALID jika:
+    - Test count <= 2 (belum terlalu banyak diuji)
+    - Terbentuk dari candle yang kuat (bukan doji atau candle kecil)
+    - Ada jarak yang cukup ke level berikutnya (RR potential >= 1.5)
+    - Tidak lebih dari 20 candle H1 yang lalu (zona masih segar)
+
+  Zona EXPIRED / TIDAK VALID jika:
+    - Test count >= 3
+    - Zona terbentuk lebih dari 50 candle H1 yang lalu
+    - Zona sudah pernah ditembus secara tegas sebelumnya
+
+================================================================================
+SECTION 2: LOGIKA PROXIMITY DETECTION (KAPAN TRIGGER AKTIF)
+================================================================================
+
+ZONE PROXIMITY STATUS:
+
+  APPROACHING (Mendekati Zona):
+    BUY Demand: 0.3% < distance_to_demand_pct <= 2.5%
+      → Harga masih di atas zona, sedang turun mendekati
+    SELL Supply: 0.3% < distance_to_supply_pct <= 2.5%
+      → Harga masih di bawah zona, sedang naik mendekati
+    Aksi: Kirim alert ringan ke admin, set status = "approaching"
+    Belum trigger AI — hemat API call
+
+  ENTERING ZONE:
+    BUY: price_within_demand = True (harga tepat berada di dalam demand zone)
+    SELL: price_within_supply = True (harga tepat berada di dalam supply zone)
+    Aksi: Langsung trigger full AI analisa
+    Ini adalah moment paling kritis — entry bisa segera
+
+  AT SUPPORT / RESISTANCE (S&R based):
+    near_support = True (distance < 0.5% dari support line)
+    near_resistance = True (distance < 0.5% dari resistance line)
+    Aksi: Trigger AI analisa (support/resistance lebih longgar dari S&D zone)
+
+  ZONE BROKEN (Zona Ditembus):
+    BUY: harga turun menembus demand_zone_low dengan body candle penuh
+    SELL: harga naik menembus supply_zone_high dengan body candle penuh
+    Aksi: Invalidate zona, kirim warning ke admin, update DB
+
+THRESHOLD KONFIGURASI (via .env):
+  ZONE_APPROACHING_PCT=2.5      # jarak zona "mendekati" dalam persen
+  ZONE_ENTERING_PCT=0.3         # jarak zona "masuk" dalam persen (trigger AI)
+  ZONE_MONITOR_INTERVAL_SECONDS=60  # seberapa sering monitor berjalan
+  ZONE_MONITOR_PAIRS=30         # jumlah pair teratas yang dipantau
+  ZONE_COOLDOWN_SECONDS=300     # cooldown per simbol setelah trigger (5 menit)
+
+================================================================================
+SECTION 3: FLOW KERJA ZONE PROXIMITY MONITOR
+================================================================================
+
+[LOOP UTAMA — setiap 60 detik]
+  |
+  ├─ Ambil tickers dari provider (volume ranking terbaru)
+  ├─ Filter top N pair berdasarkan volume (ZONE_MONITOR_PAIRS, default 30)
+  |
+  └─ Untuk setiap simbol:
+       |
+       ├─ Cek cooldown — jika dalam 5 menit terakhir sudah di-trigger, skip
+       |
+       ├─ Ambil klines M15 (50 candle) dan H1 (100 candle) — lightweight
+       |
+       ├─ Hitung zona S&D dari H1 klines → detect_demand_supply_zones()
+       ├─ Hitung S&R dari M15 klines → analyze_structure()
+       |
+       ├─ Cek current price terhadap zona:
+       |    │
+       |    ├─ price_within_demand OR near_support → trigger BUY analisa
+       |    ├─ price_within_supply OR near_resistance → trigger SELL analisa
+       |    ├─ Approaching (2.5% threshold) → kirim alert, belum trigger AI
+       |    └─ Not near any zone → skip, lanjut ke simbol berikutnya
+       |
+       └─ [JIKA TRIGGER AI]:
+            ├─ Ambil full klines (M15, H1, H4, D1) — sama seperti spike monitor
+            ├─ Jalankan detect_setup() untuk validasi teknikal
+            ├─ Jika detect_setup() return candidate:
+            |    ├─ Kirim ke DeepSeek AI
+            |    ├─ Proses response (BUY/SELL/WAIT)
+            |    └─ Broadcast jika valid
+            └─ Jika detect_setup() gagal:
+                 └─ Log reason, kirim info ke admin (opsional)
+
+================================================================================
+SECTION 4: LIGHTWEIGHT CHECK — EFISIENSI API CALL
+================================================================================
+
+Tujuan: Zone monitor berjalan setiap menit untuk 30 pair.
+Tanpa optimasi: 30 pair × 4 interval × 250 candle = 30.000 data points/menit = BOROS
+
+Strategi efisiensi:
+
+TAHAP 1 — Quick Check (ringan, setiap menit, semua 30 pair):
+  Ambil hanya: M15 (50 candle) + H1 (100 candle)
+  Tujuan: cukup untuk hitung zona dan proximity
+  Jika NOT near zone → skip. Total: 2 request per pair (60 request/menit)
+
+TAHAP 2 — Full Analysis (berat, hanya saat near zone, ~1-3 pair/menit):
+  Ambil: M15 + H1 + H4 + D1 (250 candle each)
+  Tujuan: full setup detection + AI analysis
+  Hanya jika quick check mendeteksi proximity
+  Total: 4 request × 2 pair = 8 request (jika 2 pair near zone)
+
+CACHE INTEGRATION:
+  Gunakan KlineCache yang sudah ada di bot (cache.py)
+  Set TTL M15 = 60 detik (satu interval monitor)
+  Set TTL H1 = 300 detik (5 menit)
+  Ini memastikan tidak ada double-fetch antara zone monitor dan scan utama
+
+================================================================================
+SECTION 5: KONDISI AI TRIGGER YANG VALID
+================================================================================
+
+AI DIAKTIFKAN jika semua kondisi berikut terpenuhi:
+
+Kondisi Dasar:
+  ✅ price_within_demand OR price_within_supply (harga sudah di dalam zona)
+  ATAU
+  ✅ near_support OR near_resistance (dalam 0.5% dari S&R line)
+
+  ✅ Tidak ada active signal untuk simbol ini (cek has_active_signal())
+  ✅ Simbol tidak dalam cooldown zone monitor
+  ✅ Zone validity: test_count <= 2
+
+Kondisi Penguat (tidak wajib, tapi tingkatkan prioritas):
+  ⭐ Volume pada candle M15 terkini >= 1.3x SMA20 (volume_spike_soft)
+  ⭐ Candle M15 terakhir menunjukkan reaksi (wick, doji di zona)
+  ⭐ H1 trend align dengan arah trade (BUY di demand = H1 bullish atau ranging)
+
+Kondisi Blocker (jangan trigger AI jika ada):
+  ❌ Zona sudah ditembus sebelumnya (price pernah close di bawah demand low)
+  ❌ BTC sedang dump_alert (price_change_1h < -3%) → tunda semua BUY altcoin
+  ❌ Dead zone session (01:00-05:00 WIB) → kurangi frekuensi check ke 5 menit
+  ❌ Cooldown aktif (sudah trigger dalam 5 menit terakhir)
+  ❌ Pair dalam denylist (pair pump/dump yang sudah difilter)
+
+================================================================================
+SECTION 6: NOTIFIKASI TIERED KE ADMIN
+================================================================================
+
+LEVEL 1 — APPROACHING (belum trigger AI):
+  Format: "🔵 Zone Approach: {SYMBOL} mendekati {ZONE_TYPE} di {ZONE_LEVEL}
+           Jarak: {DISTANCE}% | Trend H1: {TREND}"
+  Tujuan: admin aware bahwa pair sedang bergerak ke zona kritis
+  Frekuensi: maksimal 1x per pair per 30 menit
+
+LEVEL 2 — ENTERING ZONE (trigger AI, belum ada keputusan):
+  Format: "⚠️ Zone Entry: {SYMBOL} masuk {ZONE_TYPE} {ZONE_LOW}-{ZONE_HIGH}
+           Harga: {PRICE} | Test #{TEST_COUNT} | Menganalisa..."
+  Tujuan: admin tahu analisa sedang berjalan
+
+LEVEL 3A — AI RESULT: BUY/SELL (keputusan final):
+  Format: [Gunakan admin_signal_message yang sudah ada]
+  Broadcast normal ke channel jika valid
+
+LEVEL 3B — AI RESULT: WAIT (konfirmasi tidak cukup):
+  Format: "⏳ Zone Monitor: {SYMBOL} di zona tapi AI bilang WAIT
+           Conf: {CONF}% | Reason: {REASON}"
+  Tujuan: admin tahu zona aktif tapi setup belum matang
+
+LEVEL 4 — ZONE BROKEN (zona ditembus):
+  Format: "🚨 Zone Broken: {SYMBOL} menembus {ZONE_TYPE} ke bawah/atas
+           Level: {ZONE_LEVEL} | Zona tidak valid lagi"
+  Tujuan: admin aware bahwa setup gugur
+
+================================================================================
+SECTION 7: AI PROMPT TAMBAHAN UNTUK ZONE MONITOR
+================================================================================
+
+Saat zone monitor mengirim data ke AI, tambahkan context ini dalam payload:
+
+zone_monitor_context: {
+  "trigger_type": "price_within_demand | price_within_supply | near_support | near_resistance",
+  "zone_type": "demand | supply | support | resistance",
+  "zone_high": 0.0,
+  "zone_low": 0.0,
+  "zone_test_count": 0,
+  "zone_age_candles": 0,        // berapa candle H1 lalu zona terbentuk
+  "distance_to_zone_pct": 0.0,
+  "price_within_zone": false,
+  "candle_reaction_at_zone": "wick | engulfing | doji | none",
+  "volume_at_zone": "spike | above_avg | below_avg",
+  "zone_monitor_triggered": true
+}
+
+AI harus memprioritaskan zone_monitor_context dalam analisa:
+  - Jika zone_monitor_triggered = true DAN price_within_zone = true:
+    → AI wajib memberikan opini spesifik tentang kualitas reaksi di zona
+    → Jangan return WAIT hanya karena "tidak ada momentum" — reaksi di zona
+       adalah justifikasi untuk mempertimbangkan entry
+  - Jika zone_test_count >= 3: AI cenderung WAIT (zona exhausted)
+  - Jika zone_age_candles > 50: pertimbangkan zona sudah stale
+  - candle_reaction_at_zone = "wick" atau "engulfing": tingkatkan confidence + 8
+
+INSTRUKSI KHUSUS UNTUK AI (tambahkan ke SYSTEM_PROMPT):
+  "When zone_monitor_context.zone_monitor_triggered is true, this means price has
+  entered a pre-identified demand or supply zone. Your primary task is to evaluate
+  the QUALITY OF REACTION at this zone. A valid reaction requires at least one of:
+  (1) price action confirmation (wick, engulfing, pinbar),
+  (2) volume confirmation (spike or decreasing volume on approach),
+  (3) structure confirmation (BOS or CHoCH on M15).
+  If zone_monitor_triggered is true but no reaction is detected yet, return WAIT
+  with setup_type = 'zone_approach' and note in reason that you are waiting for
+  reaction confirmation at the [demand/supply] zone."
+
+================================================================================
+SECTION 8: KONFIGURASI .ENV YANG DIBUTUHKAN
+================================================================================
+
+Tambahkan ke .env dan .env.example:
+
+# Zone Proximity Monitor
+ENABLE_ZONE_MONITOR=true
+ZONE_MONITOR_INTERVAL_SECONDS=60
+ZONE_MONITOR_PAIRS=30
+ZONE_APPROACHING_PCT=2.5
+ZONE_ENTERING_PCT=0.3
+ZONE_COOLDOWN_SECONDS=300
+ZONE_MONITOR_MIN_CONFIDENCE=60
+ZONE_APPROACH_ALERT=true
+
+================================================================================
+SECTION 9: IMPLEMENTASI — PSEUDOCODE UNTUK zone_proximity_monitor.py
+================================================================================
+
+"""
+File: app/analysis/zone_proximity_monitor.py
+Pattern: Identik dengan volume_spike_monitor.py
+"""
+
+_ZONE_COOLDOWN: dict[str, float] = {}
+
+async def run_zone_proximity_monitor(bot) -> None:
+    settings = get_settings()
+    if not settings.enable_zone_monitor:
+        return
+    logger.info("Zone proximity monitor started pairs=%d", settings.zone_monitor_pairs)
+
+    while True:
+        try:
+            provider = await _connect_provider()
+            tickers = await provider.get_tickers()
+            top_symbols = _top_symbols_by_volume(tickers, settings.zone_monitor_pairs)
+
+            for symbol in top_symbols:
+                await _check_zone_proximity(provider, symbol, bot)
+                await asyncio.sleep(0.3)   # jeda kecil antar simbol
+
+            await provider.close()
+        except Exception:
+            logger.exception("Zone monitor error")
+
+        await asyncio.sleep(settings.zone_monitor_interval_seconds)
+
+
+async def _check_zone_proximity(provider, symbol, bot) -> None:
+    now = time()
+    if now - _ZONE_COOLDOWN.get(symbol, 0) < settings.zone_cooldown_seconds:
+        return
+
+    # TAHAP 1: Quick check (ringan)
+    m15_rows = await provider.get_klines(symbol, "15m", limit=50)
+    h1_rows  = await provider.get_klines(symbol, "1h",  limit=100)
+    df_m15   = _to_dataframe(m15_rows)
+    df_h1    = _to_dataframe(h1_rows)
+
+    zone_data = detect_demand_supply_zones(df_h1)   # dari market_structure.py
+    sr_data   = analyze_structure(df_m15)            # dari market_structure.py
+    price     = float(df_m15.iloc[-1]["close"])
+
+    proximity = _evaluate_proximity(price, zone_data, sr_data, settings)
+    if proximity["status"] == "none":
+        return
+
+    if proximity["status"] == "approaching":
+        # Kirim alert ringan ke admin, tidak trigger AI
+        await bot.send_admin(
+            f"🔵 Zone Approach: {symbol} mendekati {proximity['zone_type']} "
+            f"jarak {proximity['distance_pct']:.2f}%"
+        )
+        return
+
+    # TAHAP 2: Full analysis (berat, hanya jika entering zone)
+    _ZONE_COOLDOWN[symbol] = now
+    candles = await _fetch_full_candles(provider, symbol)
+    candidate, reason, tf = detect_setup(symbol, candles, {}, 0, 0)
+
+    if not candidate:
+        logger.info("Zone monitor rejected symbol=%s reason=%s", symbol, reason)
+        return
+
+    # Tambahkan context zona ke payload
+    candidate["zone_monitor_context"] = {
+        "trigger_type": proximity["trigger_type"],
+        "zone_type": proximity["zone_type"],
+        "zone_high": proximity["zone_high"],
+        "zone_low": proximity["zone_low"],
+        "zone_test_count": zone_data.get("demand_zone_test_count", 0),
+        "price_within_zone": proximity["within_zone"],
+        "zone_monitor_triggered": True
+    }
+
+    ai_response, _ = await DeepSeekClient().analyze(candidate)
+    # Process response sama seperti volume_spike_monitor...
+
+
+def _evaluate_proximity(price, zone_data, sr_data, settings) -> dict:
+    # Cek demand zone
+    if zone_data.get("price_within_demand"):
+        return {"status": "entering", "trigger_type": "price_within_demand",
+                "zone_type": "demand", "within_zone": True,
+                "zone_high": zone_data["demand_zone_high"],
+                "zone_low": zone_data["demand_zone_low"],
+                "distance_pct": 0.0}
+
+    # Cek supply zone
+    if zone_data.get("price_within_supply"):
+        return {"status": "entering", "trigger_type": "price_within_supply",
+                "zone_type": "supply", "within_zone": True,
+                "zone_high": zone_data["supply_zone_high"],
+                "zone_low": zone_data["supply_zone_low"],
+                "distance_pct": 0.0}
+
+    # Cek S&R (near_support / near_resistance dari analyze_structure)
+    if sr_data.get("at_support"):
+        return {"status": "entering", "trigger_type": "near_support", ...}
+    if sr_data.get("at_resistance"):
+        return {"status": "entering", "trigger_type": "near_resistance", ...}
+
+    # Cek approaching
+    dist_demand = zone_data.get("distance_to_demand_pct", 999)
+    dist_supply = zone_data.get("distance_to_supply_pct", 999)
+    approaching_pct = settings.zone_approaching_pct  # default 2.5
+
+    if 0 < dist_demand <= approaching_pct:
+        return {"status": "approaching", "zone_type": "demand",
+                "distance_pct": dist_demand, ...}
+    if 0 < dist_supply <= approaching_pct:
+        return {"status": "approaching", "zone_type": "supply",
+                "distance_pct": dist_supply, ...}
+
+    return {"status": "none"}
+
+================================================================================
+SECTION 10: INTEGRASI KE main.py / STARTUP
+================================================================================
+
+Di app/main.py atau run.py, tambahkan:
+
+  # Jalankan zone monitor paralel dengan service lain
+  asyncio.create_task(run_zone_proximity_monitor(bot))
+
+Ini sudah persis pola yang digunakan untuk run_volume_spike_monitor().
+Keduanya berjalan bersamaan secara async tanpa blocking.
+
+URUTAN STARTUP yang direkomendasikan:
+  1. Scheduler (scan utama setiap 10 menit)
+  2. Volume spike monitor (setiap 30 detik, fokus volume anomaly)
+  3. Zone proximity monitor (setiap 60 detik, fokus area S&D/S&R)
+  4. Orderflow aggregator (real-time WebSocket)
+
+Ketiga monitor saling melengkapi tanpa overlap:
+  - Scan utama: broad scan, 150 pair, sinyal baru
+  - Spike monitor: deteksi anomali volume sudden
+  - Zone monitor: presisi entry di area kritis yang sudah diidentifikasi
+
+================================================================================
+SECTION 11: PERBEDAAN ZONA DARI SCAN UTAMA VS ZONE MONITOR
+================================================================================
+
+SCAN UTAMA (setiap 10 menit):
+  - Mencari kandidat baru dari 150 pair
+  - Trigger: setup teknikal terpenuhi dari nol
+  - Respon: sinyal baru BUY/SELL
+  - Kelebihan: broad coverage
+
+ZONE MONITOR (setiap 1 menit):
+  - Memantau 30 pair teratas secara intensif
+  - Trigger: harga mendekati/masuk zona yang sudah diidentifikasi
+  - Respon: sinyal presisi berbasis reaksi zona
+  - Kelebihan: lebih cepat (tidak perlu tunggu 10 menit), lebih presisi
+
+TIDAK SALING DUPLIKASI karena:
+  - has_active_signal() mencegah double signal untuk simbol yang sama
+  - Zone monitor punya cooldown sendiri
+  - Zone monitor hanya focus pada top 30, bukan 150
+
+================================================================================
+END OF PROMPT
+================================================================================

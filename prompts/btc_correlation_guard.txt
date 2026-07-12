@@ -1,0 +1,242 @@
+================================================================================
+PROMPT: BTC CORRELATION GUARD — ALTCOIN SIGNAL FILTER
+================================================================================
+Author note: Prompt ini adalah "guardian" untuk signal altcoin. Prinsipnya sederhana:
+hampir tidak ada altcoin yang bisa sustain naik saat BTC dump, dan hampir tidak ada
+altcoin yang bisa sustain turun saat BTC pump kuat. Mengabaikan ini adalah
+kesalahan paling umum dalam trading altcoin.
+
+KONSEP INTI:
+  "BTC adalah induk pasar crypto. Altcoin adalah anaknya."
+  Sebelum entry altcoin, selalu validasi kondisi BTC terlebih dahulu.
+  Signal altcoin yang berlawanan dengan BTC memiliki win rate jauh lebih rendah.
+
+================================================================================
+SECTION 1: MEMAHAMI KORELASI BTC-ALTCOIN
+================================================================================
+
+KORELASI POSITIF (Paling Umum — 80%+ waktu):
+  - BTC naik → altcoin cenderung naik (dengan lag 0-30 menit)
+  - BTC turun → altcoin cenderung turun lebih tajam (altcoin beta > 1)
+  - Strength: semakin kecil market cap altcoin, semakin kuat korelasi ke BTC
+
+KORELASI NEGATIF / DECOUPLING (Jarang — 10-15% waktu):
+  - Terjadi saat ada narrative khusus untuk altcoin tertentu
+  - Contoh: DeFi hype, Layer 2 narrative, memcoin season
+  - Durasi decoupling biasanya singkat (1-3 hari) sebelum kembali korelasi
+
+ALTCOIN SEASON (Korelasi Lemah):
+  - BTC dominance menurun → altcoin outperform BTC
+  - Terjadi setelah BTC sudah naik cukup tinggi dan profit-taking dimulai
+  - Ciri: BTC sideways atau slow rise, tapi altcoin pump agresif
+
+KONDISI BERBAHAYA (HIGH CORRELATION DUMP):
+  - BTC dump mendadak > 3% dalam 1 jam → semua altcoin akan ikut
+  - Tidak ada setup teknikal altcoin yang bisa melawan ini
+  - Segera batalkan semua signal BUY altcoin jika kondisi ini terjadi
+
+================================================================================
+SECTION 2: BTC STATUS CLASSIFICATION
+================================================================================
+
+Klasifikasikan status BTC sebelum analisa altcoin:
+
+BTC_STATUS: "strongly_bullish"
+  Kondisi: BTC D1 bullish + H4 bullish + H1 bullish + price > EMA50 H4
+  Implikasi untuk altcoin: BUY signal altcoin memiliki probabilitas tinggi
+  Adjustment: + 8 confidence untuk semua signal BUY altcoin
+
+BTC_STATUS: "moderately_bullish"
+  Kondisi: BTC D1 bullish + H4 bullish, tapi H1 mixed atau sideways
+  Implikasi: BUY altcoin diperbolehkan dengan normal confidence
+  Adjustment: + 3 confidence untuk BUY altcoin
+
+BTC_STATUS: "neutral"
+  Kondisi: BTC ranging pada semua atau mayoritas timeframe
+  Implikasi: altcoin BUY/SELL hanya berdasarkan setup teknikal individual
+  Adjustment: tidak ada adjustment
+
+BTC_STATUS: "moderately_bearish"
+  Kondisi: BTC D1 bearish atau H4 bearish
+  Implikasi: BUY altcoin berisiko tinggi — butuh setup SANGAT kuat
+  Adjustment: - 10 confidence untuk BUY altcoin, wajib return WAIT jika conf < 75
+
+BTC_STATUS: "strongly_bearish"
+  Kondisi: BTC D1 bearish + H4 bearish + H1 bearish + price < EMA50 H4
+  Implikasi: JANGAN entry BUY altcoin apapun kondisinya
+  Adjustment: langsung return WAIT untuk semua BUY altcoin
+
+BTC_STATUS: "dump_alert"
+  Kondisi: BTC turun > 3% dalam 1 jam (price_change_pct_1h < -3%)
+  Implikasi: DARURAT — semua BUY altcoin dibatalkan
+  Adjustment: force WAIT untuk semua signal, tambah warning ke reason
+
+================================================================================
+SECTION 3: ATURAN KORELASI PER SKENARIO
+================================================================================
+
+Skenario 1 — ALTCOIN BUY, BTC BULLISH:
+  ✅ Setup ideal. Lanjutkan analisa normal.
+  Bonus: jika BTC juga baru BOS bullish pada H1 → tambah +5 confidence altcoin.
+
+Skenario 2 — ALTCOIN BUY, BTC NEUTRAL:
+  ⚠️ Diperbolehkan jika ada narrative khusus atau setup teknikal sangat kuat.
+  Syarat tambahan: altcoin harus memiliki volume rank <= 30 (liquidity cukup).
+  Jika altcoin rank > 30 saat BTC neutral → return WAIT.
+
+Skenario 3 — ALTCOIN BUY, BTC BEARISH:
+  ❌ Dilarang kecuali ada decoupling narrative yang sangat kuat.
+  Kurangi confidence 15 poin minimum. Jika confidence < min_confidence → WAIT.
+  Jika BTC H4 bearish DAN altcoin setup terlihat bagus → anggap sebagai dead cat bounce.
+
+Skenario 4 — ALTCOIN SELL, BTC BULLISH:
+  ❌ Berisiko sangat tinggi. BTC pump biasanya drag altcoin naik.
+  Diperbolehkan hanya jika:
+    a. Altcoin memiliki setup distribusi sangat jelas pada HTF
+    b. Ada negative catalyst spesifik untuk altcoin tersebut
+    c. Altcoin sedang outperform BTC berlebihan (relative weakness)
+  Kurangi confidence 12 poin. Gunakan target TP yang konservatif.
+
+Skenario 5 — ALTCOIN SELL, BTC BEARISH:
+  ✅ Setup ideal untuk SELL. Lanjutkan analisa normal.
+  Bonus: jika BTC baru saja BOS bearish H1 → tambah +5 confidence SELL altcoin.
+
+Skenario 6 — ALTCOIN SELL, BTC NEUTRAL:
+  ⚠️ Diperbolehkan dengan syarat setup teknikal altcoin sangat jelas.
+  Pastikan ada distribusi yang terkonfirmasi, bukan sekedar koreksi normal.
+
+================================================================================
+SECTION 4: BTC DOMINANCE SEBAGAI KONTEKS TAMBAHAN
+================================================================================
+
+BTC Dominance Naik (> 50% dan sedang naik):
+  → Uang mengalir dari altcoin ke BTC → altcoin cenderung underperform
+  → Kurangi confidence semua BUY altcoin sebesar 5 poin
+  → SELL altcoin lebih aman dalam kondisi ini
+
+BTC Dominance Turun (< 48% dan sedang turun):
+  → Altcoin season kemungkinan sedang terjadi
+  → Tambah confidence BUY altcoin sebesar 5 poin
+  → Altcoin mungkin decoupled dari BTC sementara
+
+BTC Dominance Stabil:
+  → Tidak ada adjustment tambahan
+
+Catatan: data BTC dominance tidak selalu tersedia dari exchange API.
+Jika tidak ada, skip bagian ini dan fokus pada BTC price action saja.
+
+================================================================================
+SECTION 5: PENGECUALIAN KORELASI
+================================================================================
+
+Altcoin yang sering decoupled dari BTC (tapi tetap perlu dimonitor):
+  - Stablecoin yield tokens (tidak relevan dengan BTC)
+  - Wrapped BTC tokens (WBTC, dll) — akan selalu korelasi penuh
+  - Exchange tokens saat ada event khusus (listing, buyback)
+  - Gaming/NFT tokens saat ada game launch atau NFT drop
+
+Cara mendeteksi decoupling:
+  - Altcoin naik > 5% sementara BTC flat atau sedikit turun dalam 4 jam terakhir
+  - Volume altcoin 3x+ di atas rata-rata tanpa trigger dari BTC
+  - Ada news/announcement spesifik untuk altcoin tersebut
+
+Jika decoupling terdeteksi:
+  - Kurangi bobot BTC correlation dalam analisa (setengah dari normal)
+  - Tetap awasi BTC — jika BTC tiba-tiba dump, decoupling akan berakhir cepat
+
+================================================================================
+SECTION 6: IMPLEMENTASI — DATA BTC YANG DIBUTUHKAN
+================================================================================
+
+Data BTC yang harus disertakan dalam setiap analisa altcoin:
+
+btc_context: {
+  "btc_d1_trend": "bullish | bearish | ranging | unclear",
+  "btc_h4_trend": "bullish | bearish | ranging | unclear",
+  "btc_h1_trend": "bullish | bearish | ranging | unclear",
+  "btc_price_change_1h_pct": 0.0,
+  "btc_price_change_4h_pct": 0.0,
+  "btc_price_change_24h_pct": 0.0,
+  "btc_above_ema50_h4": true,
+  "btc_status": "strongly_bullish | moderately_bullish | neutral | moderately_bearish | strongly_bearish | dump_alert",
+  "btc_volume_spike_h1": false,
+  "altcoin_decoupling_detected": false
+}
+
+Cara mendapatkan data ini di bot:
+  - Jalankan analyze_timeframe() pada klines BTCUSDT secara terpisah
+  - Sertakan dalam payload setiap altcoin yang akan dianalisa AI
+  - Tidak memerlukan endpoint baru — gunakan klines yang sudah di-cache
+
+================================================================================
+SECTION 7: AI DECISION RULES
+================================================================================
+
+WAJIB RETURN WAIT untuk BUY altcoin jika:
+  - btc_status = "strongly_bearish"
+  - btc_status = "dump_alert"
+  - btc_h4_trend = "bearish" AND altcoin_decoupling_detected = false
+    AND final confidence setelah adjustment < min_confidence
+
+KURANGI CONFIDENCE untuk BUY altcoin jika:
+  - btc_status = "moderately_bearish": kurangi 10 poin
+  - btc_status = "neutral" AND altcoin volume_rank > 30: kurangi 5 poin
+  - btc_price_change_1h_pct < -2%: kurangi 8 poin (BTC sedang turun agresif)
+
+TAMBAH CONFIDENCE untuk BUY altcoin jika:
+  - btc_status = "strongly_bullish": tambah 8 poin
+  - btc_status = "moderately_bullish": tambah 3 poin
+  - btc_price_change_1h_pct > 2% (BTC sedang pump): tambah 5 poin
+  - altcoin_decoupling_detected = true AND btc_status = "neutral": tambah 5 poin
+
+WAJIB RETURN WAIT untuk SELL altcoin jika:
+  - btc_status = "strongly_bullish" AND altcoin_decoupling_detected = false
+  - btc_price_change_1h_pct > 3%: BTC sedang pump kuat, hindari SELL altcoin
+
+REASON FIELD harus menyebutkan:
+  - Status BTC saat ini (btc_status)
+  - Apakah BTC mendukung atau berlawanan dengan arah trade
+  - Jika ada decoupling: sebutkan bahwa ada narrative/catalyst khusus
+
+================================================================================
+SECTION 8: OUTPUT JSON FORMAT TAMBAHAN
+================================================================================
+
+{
+  "btc_correlation": {
+    "btc_status": "strongly_bullish | moderately_bullish | neutral | moderately_bearish | strongly_bearish | dump_alert",
+    "btc_d1_trend": "bullish | bearish | ranging | unclear",
+    "btc_h4_trend": "bullish | bearish | ranging | unclear",
+    "correlation_supports_trade": true,
+    "decoupling_detected": false,
+    "confidence_adjustment": 0,
+    "btc_guard_action": "proceed | reduce_confidence | wait"
+  }
+}
+
+================================================================================
+SECTION 9: INTEGRASI KE BOT
+================================================================================
+
+1. Di scanner.py:
+   Selalu ambil dan cache klines BTCUSDT bersamaan dengan pair lain
+   Hitung btc_status sebelum atau selama loop scanning altcoin
+   Sertakan btc_context dalam setiap payload AI untuk non-BTC pair
+
+2. Di setup_detector.py:
+   Tambahkan parameter btc_tf (hasil analyze_timeframe untuk BTC)
+   Tambahkan fungsi apply_btc_correlation_guard(direction, btc_status, confidence)
+   Panggil setelah calculate_plan(), sebelum volume_gate
+
+3. Di prompt AI (SYSTEM_PROMPT):
+   Tambahkan rule: "Always check btc_context before deciding on any non-BTC altcoin.
+   If btc_status is strongly_bearish and symbol is not BTCUSDT, return WAIT for BUY."
+
+4. SYMBOL EXCEPTION — jangan apply BTC guard untuk:
+   - BTCUSDT sendiri (sudah jelas, tidak perlu di-cross-check)
+   - ETHUSDT: apply tapi dengan bobot lebih rendah (ETH lebih sering decoupled)
+   - Stablecoin pairs: tidak relevan
+
+================================================================================
+END OF PROMPT
+================================================================================

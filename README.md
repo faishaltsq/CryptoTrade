@@ -1,73 +1,320 @@
 # CryptoTrade
 
-CryptoTrade is an AI-driven signal-only crypto market analysis bot. It extracts objective market features from public perpetual futures data, sends structured market context to DeepSeek for analysis, then routes validated signals to a Telegram admin bot for approval before broadcasting to a channel.
+AI-driven crypto futures signal bot. Extracts market features from public perpetual futures data, sends structured context to DeepSeek for analysis, routes validated signals to Telegram.
 
-The bot does not hardcode a single trading method. DeepSeek chooses the most relevant analysis approach based on the available data: trend, momentum, volatility, price action, support/resistance, volume, derivatives data, orderflow, and risk-reward.
+The bot does not place trades, execute orders, or use private exchange APIs. It is signal-only.
 
-The project does not place trades. It does not use private exchange APIs, trading endpoints, account endpoints, balance endpoints, position endpoints, leverage endpoints, or withdrawal permissions.
+## Architecture
+
+```
+Market Data Providers (Gate, OKX, Bybit, MEXC, KuCoin)
+         │
+         ▼
+   ┌─────────┐   ┌──────────────┐   ┌─────────────┐
+   │ Scanner │   │ Spike Monitor│   │Zone Monitor  │
+   │ (10 min)│   │  (30 sec)    │   │  (60 sec)    │
+   └────┬────┘   └──────┬───────┘   └──────┬──────┘
+        │               │                  │
+        ▼               ▼                  ▼
+   ┌─────────────────────────────────────────┐
+   │         DeepSeek AI Analysis            │
+   │    (System Prompt: 37 trading rules)     │
+   └──────────────────┬──────────────────────┘
+                      │
+        ┌─────────────┼─────────────┐
+        ▼             ▼             ▼
+   ┌─────────┐  ┌──────────┐  ┌───────────┐
+   │ Signal  │  │Watchlist │  │  Outcome  │
+   │Broadcast│  │  Manager │  │  Tracker  │
+   └────┬────┘  └────┬─────┘  └───────────┘
+        │            │
+        ▼            ▼
+   ┌────────────────────┐
+   │    Telegram Bot     │
+   │  (Admin + Channel)  │
+   └────────────────────┘
+```
 
 ## Features
 
-- AI-driven market analysis via DeepSeek. No hardcoded single trading method.
-- Multi-provider public market data architecture (Bybit, OKX, Gate.io, MEXC, KuCoin).
-- USDT perpetual market focus. Top 150 pairs by 24h volume.
-- Automatic provider failover when the primary provider fails.
-- Kline data cache with TTL (15m/1h/4h/24h) to reduce API calls by 60-70%.
-- Public WebSocket orderflow layer for realtime trade, ticker, kline, depth, and liquidation data where supported.
-- Orderflow used as confirmation layer only, not standalone entry trigger.
-- Multi-timeframe candles: `15m`, `1h`, `4h`, `1d`.
-- Detailed volume metrics sent to AI: volume spike, volume ratio, volume trend per timeframe.
-- Market feature extraction: EMA, RSI, ATR, swing points, market structure, price zones, volume spikes, risk-reward.
-- DeepSeek strict JSON validation.
-- Telegram admin notification with validation warning badges inline in header.
-- Telegram channel auto-broadcast for valid signals, individual + batch recap per 5 signals.
-- Signal outcome tracking with candle-level backfill detection (catches TP/SL hits between polls).
-- Signal learning loop: adaptive scoring, post-trade review, strategy lessons with auto-approve for quality lessons.
-- Daily signal recap at 21:00 WIB.
-- TP2-based risk-reward recalculation from geometric distance (entry midpoint × TP2).
-- Compact single-message signal format (no split chunks).
-- 5 signals per page with Prev/Next navigation.
-- Validation warnings instead of blocking rejected signals.
-- Telegram retry with ok-field validation + 429 cooldown.
-- SQLite MVP database with SQLAlchemy models.
-- FastAPI API and Swagger docs.
-- APScheduler scheduled scans with runtime interval changes.
+### Core Signal System
+- **AI analysis** via DeepSeek with 37 trading rules (trend, momentum, volume, S/R, orderflow, derivatives, risk-reward, RSI thresholds, zone reaction, false breakout, BTC correlation, session timing, volume accumulation, orderbook context, continuous analyst mindset)
+- **Multi-provider** market data (Gate, OKX, Bybit, MEXC, KuCoin) with automatic failover
+- **Multi-timeframe**: M15, H1, H4, D1 candles
+- **Kline cache** with TTL (15m/1h/4h/24h) reducing API calls 60-70%
+- **Volume spike monitor** — polls every 30s, detects volume anomalies, triggers AI analysis
+- **Zone proximity monitor** — polls every 60s, detects price entering demand/supply zones, triggers AI analysis
+- **Signal validation**: confidence, risk-reward, orderflow conflict, entry/SL/TP completeness
+- **Auto-broadcast** valid signals to Telegram channel, warning signals to admin only
+- **Batch recap** per 5 signals as backup summary
+- **Inline warning badges** on signal headers for quick assessment
+- **Signal auto-pinning** to channel, daily unpin at 21:00 WIB
 
-## Safety Rules
+### Live Watchlist System
+- **Continuous pair monitoring** across all 3 AI analysis sources
+- **Market states**: WATCHING → ACCUMULATING → BREAKOUT_READY → TRENDING with transition rules
+- **Probability tracking**: previous/current probability with delta and change reason
+- **Opportunity ranking**: composite score (confidence, priority, RR, trigger distance, analysis count)
+- **Single Telegram message**, edited in-place (editMessageText), day-separated
+- **DB persistence**: `watchlist_items` table with history (analysis_count per pair)
+- **Auto-cleanup**: expired, completed, and invalid items removed
+- **Commands**: `/watchlist` (refresh), `/watchlist clear` (reset)
 
-- Signal-only MVP.
-- No auto-trading.
-- No exchange API keys required for market data.
-- No private API endpoints.
-- No order creation/cancellation.
-- No balance, account, position, leverage, margin, or withdrawal endpoints.
-- No automatic VPN/proxy bypass logic.
-- Redirects are not followed silently in market clients.
-- If all providers fail, the bot stays alive and sends a diagnostic summary to the admin.
+### Analysis & Detection
+- **Indicators**: EMA, RSI, ATR, volume SMA, OBV, CVD (approximate), volume spike/trend/ratio
+- **Market structure**: swing points, BOS/CHoCH, support/resistance, demand/supply zones
+- **False breakout scoring** (0-10): volume, RSI, structure, round number, CVD divergence
+- **Zone reaction scoring** (0-3): wick detection, engulfing, volume exhaustion at S/D zones
+- **BTC correlation guard**: BTC status classification, confidence adjustment, dump alert
+- **Session timing filter**: dead zone, Asian, London, NY overlap with confidence adjustments
+- **Risk-reward**: structural SL/TP, TP2 probability estimation, ATR-based buffer
+- **Volume accumulation**: OBV divergence, CVD divergence, volume compression detection
+- **Orderbook context**: depth ratio, bid/ask walls, spread analysis
+- **Whale activity tracking**: large trade buy/sell volume and notional
+
+### Learning System
+- **Outcome tracking**: TP/SL/expiry detection with candle backfill (OHLCV high/low between polls)
+- **Post-trade review**: DeepSeek analyzes completed signals, generates lesson suggestions
+- **Strategy lessons**: 7 types (confidence_boost, confidence_penalty, filter_rule, risk_adjustment, prompt_context, warning_note, avoid_condition)
+- **Auto-approve** for quality lessons (confidence_boost, confidence_penalty, filter_rule, risk_adjustment)
+- **Adaptive scoring**: active lessons adjust candidate confidence pre-broadcast
+- **Performance analytics**: winrate, per-symbol, per-regime, per-direction stats
+- **Daily signal recap** at 21:00 WIB with full outcome summary
+
+### Telegram Commands
+
+```
+/start              Start + auto broadcast enable
+/status             Live server state
+/cache              Kline cache stats (hit rate, entries, TTL)
+/scan_now           Manual market scan
+/pairs              Pair list (20/page)
+/top_volume         Highest volume pairs (15/page)
+/signals            Recent signals (5/page)
+/signal_detail ID   Full signal detail
+/signal_result ID R Set outcome
+/signal_recap       Today signal summary
+/pending_signals    Pending outcome signals
+/outcomes           Recent resolved outcomes
+/performance        Winrate, per-symbol stats (7d/30d/all)
+/waiting            Rejected/Warning candidate list
+/settings           Config overview
+/set_confidence N   Min confidence threshold
+/set_rr N.N         Min risk-reward threshold
+/set_interval N     Scan interval (minutes)
+/broadcast_on       Enable auto channel broadcast
+/broadcast_off      Manual approval mode
+/last_scan          Last scan result
+/diagnose_market    Provider connectivity test
+/orderflow SYM      Orderflow summary
+/orderflow_top      Top orderflow activity
+/nudge ID approve   Manual signal approve
+/nudge ID reject    Manual signal reject
+/watchlist          Refresh live watchlist
+/watchlist clear    Reset watchlist
+/approve_all        Auto-approve best 10 lessons
+/lessons            Strategy lessons list
+/lesson_detail ID   Lesson detail
+/approve_lesson ID  Approve lesson
+/reject_lesson ID   Reject lesson
+/disable_lesson ID  Disable lesson
+/review_signal ID   Trigger signal review
+/learning_status    Learning loop status
+/help               Command list
+```
 
 ## Project Structure
 
-```text
+```
 app/
-  ai/                 DeepSeek client, prompt builder, response parser
-  analysis/           Indicators, structure, SMC, setup detection, RR
-  database/           SQLAlchemy models, session, repository
-  market_data/        Multi-provider public market data clients
-  orderflow/          Public WebSocket orderflow providers and aggregation
+  ai/                 DeepSeek client, prompt builder (37 rules), response parser
+  analysis/           Indicators (EMA/RSI/ATR/OBV/CVD), market structure (S/R/zones/BOS),
+                        setup detector, risk-reward, volume spike monitor, zone proximity monitor
+  watchlist/          Live watchlist manager, models, state machine, Telegram message editing
+  database/           SQLAlchemy models (SignalLog, OrderflowSnapshot, WatchlistItem, etc.),
+                        session, repository
+  learning/           Outcome tracker, post-trade reviewer, performance analyzer,
+                        adaptive scoring, lesson manager
+  market_data/        Multi-provider REST clients (Gate/OKX/Bybit/MEXC/KuCoin),
+                        kline cache, symbol mapper, provider factory
+  orderflow/          WebSocket providers (Gate/OKX/Bybit/MEXC), trade flow store,
+                        orderflow analyzer, volume delta
   signal/             Signal validation, formatting, broadcasting
-  telegram/           Admin bot commands, callbacks, webhook/ngrok setup
-  utils/              Logging and time helpers
+  telegram/           Admin bot (send/edit/pin/retry), commands, callbacks,
+                        message formatter, webhook manager
+  utils/              Logging setup
 run.py                FastAPI runner
 requirements.txt      Python dependencies
 .env.example          Environment template
+prompts/              Reference prompt files for AI analysis rules
 ```
 
-## Requirements
+## Environment Configuration
 
-- Python 3.11+
-- Telegram bot token from BotFather
-- DeepSeek API key
-- Optional ngrok account/token for local Telegram webhook testing
+```env
+# Core
+DEEPSEEK_API_KEY=your_key
+TELEGRAM_BOT_TOKEN=your_token
+TELEGRAM_ADMIN_CHAT_ID=your_admin_id
+TELEGRAM_CHANNEL_CHAT_ID=your_channel_id
+
+# Providers
+MARKET_PROVIDER=gate
+FALLBACK_MARKET_PROVIDER=gate
+ALTCOIN_PROVIDER=gate
+
+# Scan
+MAX_PAIRS=150
+SCAN_INTERVAL_MINUTES=10
+MAX_REALTIME_PAIRS=70
+MAX_DEPTH_PAIRS=20
+
+# Signal Filters
+MIN_CONFIDENCE=50
+MIN_RISK_REWARD=1.5
+AUTO_BROADCAST=true
+
+# Zone Monitor
+ENABLE_ZONE_MONITOR=true
+ZONE_MONITOR_INTERVAL_SECONDS=60
+ZONE_MONITOR_PAIRS=30
+ZONE_APPROACHING_PCT=2.5
+
+# Learning
+ENABLE_ORDERFLOW=true
+ENABLE_OUTCOME_TRACKING=true
+ENABLE_SIGNAL_LEARNING=true
+ENABLE_AUTO_REVIEW=true
+ENABLE_ADAPTIVE_SCORING=true
+REQUIRE_ADMIN_APPROVAL_FOR_LESSONS=false
+SIGNAL_MARKET_VALID_MINUTES=30
+PERFORMANCE_LOOKBACK_DAYS=30
+MAX_ACTIVE_LESSONS_IN_PROMPT=10
+
+# Expiry
+SIGNAL_EXPIRY_M15_HOURS=6
+SIGNAL_EXPIRY_H1_HOURS=24
+SIGNAL_EXPIRY_H4_HOURS=72
+```
+
+## Signal Flow
+
+### Main Scanner (10 min)
+1. Fetch top 150 pairs by 24h volume
+2. Multi-timeframe kline fetch (M15/H1/H4/D1) with cache
+3. Technical indicator computation (EMA, RSI, ATR, OBV, CVD)
+4. Market structure analysis (trend, BOS/CHoCH, S/R levels)
+5. Demand/supply zone detection
+6. False breakout scoring
+7. Risk-reward plan calculation (structural SL/TP)
+8. Volume gate (5 tiers: spike → soft spike → top-10 → stable → minimal)
+9. BTC correlation context computation
+10. Session timing classification
+11. Zone analysis (reaction score, within/near zone)
+12. Adaptive scoring pre-check
+13. DeepSeek AI analysis with full market context
+14. TP2 probability calculation
+15. Signal validation
+16. Admin notification (BUY/SELL only) + channel broadcast (valid only)
+17. Live watchlist update
+18. Batch recap per 5 signals
+19. Daily recap at 21:00 WIB
+
+### Volume Spike Monitor (30 sec)
+1. Poll tickers for top `MAX_REALTIME_PAIRS` by volume
+2. Check M15 candle: volume > 2× 20-bar SMA
+3. Cooldown 10 min per symbol
+4. Duplicate check: skip if active signal exists
+5. AI analysis (same DeepSeek pipeline)
+6. Watchlist update + Telegram alert
+
+### Zone Proximity Monitor (60 sec)
+1. Poll tickers for top `ZONE_MONITOR_PAIRS` by volume
+2. Lightweight: M15 (50 candles) + H1 (100 candles) only
+3. Detect S/D zones + S/R levels from market structure
+4. Proximity evaluation:
+   - `price_within_demand/supply` → full AI analysis
+   - `near_support/resistance` (0.5%) → full AI analysis
+   - `approaching` (0.3-2.5%) → admin alert only
+5. Cooldown 5 min per symbol
+6. On trigger: full 4 TF fetch + detect_setup + DeepSeek + broadcast
+
+## Live Watchlist System
+
+### Architecture
+```
+Scanner / Spike Monitor / Zone Monitor
+         │
+         ▼
+   update_from_scan()
+         │
+    ┌────┴────┐
+    │ State Machine  │  ← WATCHING/ACCUMULATING/BREAKOUT_READY/TRENDING/CHOPPY/WEAK
+    │ Priority Calc  │  ← 6-factor weighted score
+    │ Prob Tracking  │  ← previous → current with delta + reason
+    │ Opp Ranking    │  ← composite opportunity score
+    └────┬────┘
+         │
+         ▼
+   WatchlistItem DB
+         │
+         ▼
+   refresh_all()
+         │
+    ┌────┴────┐
+    │ editMessageText (update existing)  │
+    │ OR sendMessage (create new)        │
+    └────────────────────────────────────┘
+```
+
+### Priority Score Formula
+| Factor | Weight |
+|--------|--------|
+| AI Confidence | 40% |
+| Orderflow Score | 20% |
+| Volume Ratio | 15% |
+| Risk-Reward | 10% |
+| Momentum (spike + CVD) | 10% |
+| HTF Context | 5% |
+
+### States & Transitions
+| From | To (allowed) |
+|------|-------------|
+| WATCHING | ACCUMULATING, BREAKOUT_READY, BREAKDOWN_READY, PULLBACK_READY, TRENDING, CHOPPY, WEAK |
+| ACCUMULATING | BREAKOUT_READY, TRENDING, WEAK |
+| BREAKOUT_READY | TRENDING, CHOPPY, WEAK |
+| PULLBACK_READY | TRENDING, BREAKOUT_READY, WATCHING, WEAK |
+| TRENDING | CHOPPY, WEAK, PULLBACK_READY |
+| CHOPPY | WATCHING, BREAKOUT_READY, BREAKDOWN_READY, WEAK |
+| WEAK | WATCHING, INVALID |
+| INVALID | (terminal) |
+
+### Telegram Display
+```
+Live Watchlist  —  12:16 UTC
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔥 READY
+🟢 BTCUSDT [BREAKOUT_READY] op72 84% Δ+6% | P78 | 0.5%
+  volume increasing, near key level
+  D1 bullish trend, H4 support holding, buyers active
+
+👀 WATCHING (12)
+...
+
+⚠ WEAK (3)
+...
+
+Total: 16
+```
+
+## Safety Rules
+
+- Signal-only MVP. No auto-trading.
+- No exchange API keys required for market data.
+- No private API endpoints (balance, account, position, leverage, withdrawal).
+- No automatic VPN/proxy bypass logic.
+- Redirects not followed silently in market clients.
+- If all providers fail, bot stays alive and sends diagnostic summary.
 
 ## Installation
 
@@ -76,405 +323,12 @@ cd crypto-ai-signal-bot
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-copy .env.example .env
-```
+cp .env.example .env
+# Edit .env with your keys
 
-Edit `.env` and fill your secrets:
-
-```env
-DEEPSEEK_API_KEY=your_deepseek_key
-TELEGRAM_BOT_TOKEN=your_telegram_bot_token
-TELEGRAM_ADMIN_CHAT_ID=your_admin_chat_id
-TELEGRAM_CHANNEL_CHAT_ID=your_channel_chat_id
-```
-
-Do not commit `.env`.
-
-## Market Provider Config
-
-Default provider order:
-
-```env
-MARKET_PROVIDER=bybit
-FALLBACK_MARKET_PROVIDER=okx
-ALTCOIN_PROVIDER=gate
-```
-
-Provider endpoints:
-
-```env
-BYBIT_REST_BASE_URL=https://api.bybit.com
-BYBIT_WS_LINEAR_URL=wss://stream.bybit.com/v5/public/linear
-OKX_REST_BASE_URL=https://www.okx.com
-OKX_WS_PUBLIC_URL=wss://ws.okx.com:8443/ws/v5/public
-GATE_REST_BASE_URL=https://api.gateio.ws/api/v4
-GATE_FUTURES_WS_URL=wss://fx-ws.gateio.ws/v4/ws/usdt
-MEXC_REST_BASE_URL=https://contract.mexc.com
-MEXC_SPOT_WS_URL=wss://wbs-api.mexc.com/ws
-```
-
-Scan universe size:
-
-```env
-MAX_PAIRS=150
-```
-
-This expands the scan universe for liquid crypto perpetuals, including altcoin, memecoin, DeFi, and other crypto sectors while filtering known stock-like and metals contracts from mixed providers.
-
-Scanner tries providers in this order:
-
-1. `MARKET_PROVIDER`
-2. `FALLBACK_MARKET_PROVIDER`
-3. `ALTCOIN_PROVIDER`
-
-If all fail, the scan is skipped and the bot remains online.
-
-## Orderflow Config
-
-```env
-ENABLE_ORDERFLOW=true
-ENABLE_LIQUIDATION_STREAM=true
-MAX_REALTIME_PAIRS=70
-MAX_DEPTH_PAIRS=20
-ORDERFLOW_WINDOWS=10s,1m,5m
-```
-
-Performance rules:
-
-- Top pairs use realtime trades/ticker/kline only.
-- Depth orderbook is only enabled for setup candidates.
-- Raw tick data is not stored without bounds.
-- Only orderflow summaries are stored.
-- WebSocket tasks auto-reconnect where implemented.
-
-Orderflow metrics include:
-
-- `buy_volume`
-- `sell_volume`
-- `volume_delta`
-- `cumulative_volume_delta`
-- `delta_ratio`
-- `trade_count`
-- `trade_intensity`
-- `average_trade_size`
-- `large_trade_count`
-- `best_bid`
-- `best_ask`
-- `spread`
-- `bid_depth`
-- `ask_depth`
-- `orderbook_imbalance`
-- `liquidity_wall_side`
-- `liquidity_wall_price`
-- `liquidity_pull_detected`
-- `liquidation_buy_notional`
-- `liquidation_sell_notional`
-- `liquidation_spike_detected`
-
-Orderflow is used as a confirmation layer in DeepSeek prompts, not as the primary entry reason.
-
-## Orderflow Confirmation Layer
-
-Orderflow is used after market setup detection. It is a confirmation layer, not a standalone entry trigger.
-
-Core rules:
-
-- Technical structure remains the primary signal source.
-- BUY/SELL can only broadcast when technical setup is valid, RR is valid, final confidence meets threshold, and orderflow has no strong conflict.
-- If orderflow conflicts with the technical setup, confidence is reduced or the setup becomes `WAIT`.
-- If orderflow supports the setup, confidence can increase.
-- If orderflow data is insufficient, the setup may still be sent to admin, but auto-broadcast is blocked.
-
-Auto-broadcast is enabled on launch by default. Use `/broadcast_off` to pause channel broadcasting at runtime.
-
-## Signal Logging And Outcome Tracking
-
-CryptoTrade stores every BUY/SELL signal in `signal_logs` with a unique ID, original AI response, trade plan, market context, orderflow summary, derivatives summary, broadcast status, outcome status, and review status.
-
-For every new signal, the bot also creates a `signal_outcomes` row with `pending` result. This is the foundation for a future learning loop, but it is not model fine-tuning and it does not give DeepSeek permanent memory.
-
-Outcome tracking is signal-only. It does not open positions, place orders, cancel orders, or use private trading APIs. It checks public market prices against TP/SL/expiry rules with spot price polling + candle high/low backfill to catch hits between polls.
-
-Tracked outcomes:
-
-- `pending`
-- `hit_tp1`
-- `hit_tp2`
-- `hit_sl`
-- `break_even`
-- `expired`
-- `invalidated`
-- `manually_closed`
-
-Default expiry:
-
-- M15/scalp: `SIGNAL_EXPIRY_M15_HOURS=6`
-- H1/intraday/default: `SIGNAL_EXPIRY_H1_HOURS=24`
-- H4/swing: `SIGNAL_EXPIRY_H4_HOURS=72`
-
-Outcome tracking can be disabled with:
-
-```env
-ENABLE_OUTCOME_TRACKING=false
-```
-
-Telegram commands:
-
-- `/signals` shows recent BUY/SELL signals.
-- `/signal_recap` shows all BUY/SELL signals for the current WIB day.
-- `/signal_detail ID` shows full signal context and status.
-- `/signal_result ID RESULT` manually updates a signal outcome.
-- `/pending_signals` shows signals still waiting for TP/SL/expiry.
-- `/outcomes` shows recent closed outcome summary.
-
-Allowed manual results: `hit_tp1`, `hit_tp2`, `hit_sl`, `break_even`, `expired`, `invalidated`, `manually_closed`.
-
-## Signal Learning Loop
-
-CryptoTrade includes a feedback loop for signal quality improvement. This is not DeepSeek fine-tuning and DeepSeek does not gain permanent memory. The bot stores signal history, tracks outcomes, asks DeepSeek to review completed signals, stores suggested lessons, and uses only admin-approved active lessons as context for future analysis.
-
-Learning flow:
-
-```text
-Market Data
-→ Feature Extractor
-→ Orderflow Analyzer
-→ Load Active Lessons
-→ Adaptive Scoring Precheck
-→ DeepSeek AI Market Analyst with learning_context
-→ Signal Validator
-→ Save Signal
-→ Telegram Admin / Channel Broadcast
-→ Outcome Tracker
-→ Post-Trade Review
-→ Suggested Lessons
-→ Admin Approval
-→ Active Lessons
-```
-
-Safety rules:
-
-- Still signal-only.
-- No auto-trading.
-- No order creation/cancellation.
-- No private exchange API.
-- DeepSeek review output must be valid JSON.
-- AI cannot activate rules directly.
-- New lessons are created as `suggested`.
-- Only `/approve_lesson ID` makes a lesson `active`, or set `REQUIRE_ADMIN_APPROVAL_FOR_LESSONS=false` for auto-approve (quality types only).
-- Rejected or disabled lessons are not injected into prompts.
-
-Learning config:
-
-```env
-ENABLE_SIGNAL_LEARNING=true
-ENABLE_AUTO_REVIEW=true
-ENABLE_ADAPTIVE_SCORING=true
-REQUIRE_ADMIN_APPROVAL_FOR_LESSONS=true
-MAX_ACTIVE_LESSONS_IN_PROMPT=10
-MIN_EVIDENCE_COUNT_FOR_AUTO_SUGGESTION=5
-PERFORMANCE_LOOKBACK_DAYS=30
-LEARNING_REVIEW_MODEL=deepseek-chat
-LEARNING_PROMPT_VERSION=ai_signal_review_v1
-```
-
-Database tables:
-
-- `signal_outcomes` tracks TP/SL/expiry, MFE, MAE, duration, and close reason.
-- `signal_reviews` stores DeepSeek post-trade review JSON and failure classification.
-- `strategy_lessons` stores suggested/active/rejected/disabled lessons with audit trail.
-- `performance_snapshots` stores computed performance summaries.
-
-Post-trade review classification:
-
-- `good_signal`
-- `valid_loss`
-- `avoidable_loss`
-- `bad_signal`
-- `inconclusive`
-
-Lesson types:
-
-- `avoid_condition`
-- `confidence_penalty`
-- `confidence_boost`
-- `filter_rule`
-- `risk_adjustment`
-- `prompt_context`
-- `warning_note`
-
-Adaptive scoring:
-
-- Uses active lessons only.
-- Confidence penalty is capped at `-25`.
-- Confidence boost is capped at `+10`.
-- Boost is blocked when RR is poor, orderflow conflicts, or data is insufficient.
-- `avoid_condition` and `filter_rule` active lessons can block a candidate before broadcast.
-
-Learning commands:
-
-- `/performance`, `/performance 7d`, `/performance 30d`, `/performance all`
-- `/lessons`
-- `/lesson_detail ID`
-- `/approve_lesson ID`
-- `/reject_lesson ID`
-- `/disable_lesson ID`
-- `/review_signal ID`
-- `/signal_result ID RESULT`
-- `/learning_status`
-
-Daily recap:
-
-- The bot sends an automatic signal recap every day at `21:00 WIB`.
-- Recap includes all BUY/SELL signals for that day without filtering: valid, rejected, broadcasted, failed, pending, TP, SL, and expired.
-- Long recap messages are split automatically for Telegram delivery.
-
-Aggressive trade interpretation:
-
-- Aggressive buy volume means buyer taker pressure, not guaranteed new long positions.
-- Aggressive sell volume means seller taker pressure, not guaranteed new short positions.
-- Buy pressure with open interest rising may suggest new long risk.
-- Buy pressure with open interest falling may suggest short covering.
-- Sell pressure with open interest rising may suggest new short risk.
-- Sell pressure with open interest falling may suggest long closing.
-
-Orderflow scoring:
-
-- Technical score: `0-60`
-- Orderflow score: `-25` to `+25`
-- Risk score: `0-15`
-- Final confidence: `technical_score + orderflow_score + risk_score`, clamped to `0-100`
-
-Telegram commands:
-
-```text
-/orderflow BTCUSDT
-/orderflow_top
-```
-
-`/orderflow SYMBOL` shows the latest 1m orderflow summary for a symbol. `/orderflow_top` lists recent orderflow activity ranked from stored snapshots.
-
-The project remains signal-only and does not perform auto-trading.
-
-## Running Locally
-
-```bash
+# Run
 python run.py
 ```
-
-Open Swagger docs:
-
-```text
-http://localhost:8000/docs
-```
-
-Health check:
-
-```bash
-curl http://localhost:8000/health
-```
-
-Run scan and wait for result:
-
-```bash
-curl -X POST http://localhost:8000/scan/run
-```
-
-Queue background scan:
-
-```bash
-curl -X POST http://localhost:8000/scan
-```
-
-Check scan state:
-
-```bash
-curl http://localhost:8000/scan/state
-```
-
-## Telegram Setup
-
-For local development, enable ngrok:
-
-```env
-AUTO_NGROK=true
-NGROK_AUTHTOKEN=your_ngrok_token
-APP_PORT=8000
-```
-
-Then run:
-
-```bash
-python run.py
-```
-
-Startup should log:
-
-```text
-Ngrok tunnel started https://...
-Telegram webhook set to https://.../telegram/webhook
-```
-
-If deploying to a public server, use:
-
-```env
-AUTO_NGROK=false
-PUBLIC_BASE_URL=https://your-domain.com
-```
-
-## Telegram Commands
-
-Admin-only commands:
-
-- `/start` — Start + auto broadcast enable
-- `/status` — Live server state
-- `/cache` — Kline cache stats (hit rate, entries, TTL)
-- `/scan_now` — Manual market scan
-- `/pairs` — Pair list (20/page)
-- `/top_volume` — Highest volume pairs (15/page)
-- `/signals` — Recent signals (5/page with Prev/Next)
-- `/signal_detail ID` — Full signal detail
-- `/signal_result ID RESULT` — Set outcome (hit_tp1, hit_tp2, hit_sl, expired, etc.)
-- `/signal_recap` — Today signal summary
-- `/pending_signals` — Pending outcome signals
-- `/outcomes` — Recent resolved outcomes
-- `/performance` — Winrate, per-symbol stats
-- `/waiting` — Rejected/Warning candidate list
-- `/settings` — Config overview
-- `/set_confidence 70` — Min confidence
-- `/set_rr 2.0` — Min risk-reward
-- `/set_interval 15` — Scan interval (minutes, needs restart)
-- `/broadcast_on` — Enable auto channel broadcast
-- `/broadcast_off` — Manual approval mode
-- `/last_scan` — Last scan result
-- `/diagnose_market` — Provider connectivity test
-- `/orderflow SYMBOL` — Orderflow summary
-- `/orderflow_top` — Top orderflow activity
-- `/nudge ID approve|reject` — Manual signal approve/reject
-- `/approve_all` — Auto-approve best 10 suggested lessons
-- `/lessons` — Strategy lessons list
-- `/lesson_detail ID` — Lesson detail
-- `/approve_lesson ID` — Approve suggested lesson
-- `/reject_lesson ID` — Reject lesson
-- `/disable_lesson ID` — Disable active lesson
-- `/review_signal ID` — Trigger signal review
-- `/learning_status` — Learning loop status
-- `/help` — Command list
-
-The bot also sends an inline keyboard menu.
-
-## Telegram Message Formatting
-
-- Semua command Telegram memakai `parse_mode="HTML"`.
-- Dynamic text di-escape sebelum dikirim.
-- Message panjang otomatis di-split dengan batas aman 3800 karakter.
-- List panjang otomatis memakai pagination.
-- Formatter terpusat di `app/telegram/message_formatter.py`.
-- `/pairs` menampilkan 20 item per halaman.
-- `/top_volume` menampilkan 15 item per halaman.
-- `/signals` menampilkan 5 item per halaman.
-- `/waiting` menampilkan 15 item per halaman.
-- Inline keyboard tersedia untuk Prev, Next, Refresh, menu command, dan action signal.
 
 ## API Endpoints
 
@@ -488,50 +342,3 @@ The bot also sends an inline keyboard menu.
 - `GET /rejected`
 - `GET /orderflow/{symbol}`
 - `POST /telegram/webhook`
-
-## Database
-
-Default:
-
-```env
-DATABASE_URL=sqlite:///crypto_signal_bot.db
-```
-
-Tables:
-
-- `scan_logs`
-- `signal_logs`
-- `rejected_setups`
-- `settings`
-- `orderflow_snapshots`
-
-`signal_logs` stores `orderflow_summary_json`, `binance_endpoint_status`, and `market_data_error` for audit/debugging.
-
-## Market Diagnostics
-
-Telegram command:
-
-```text
-/diagnose_market
-```
-
-This checks configured providers from `MARKET_PROVIDER`, `FALLBACK_MARKET_PROVIDER`, and `ALTCOIN_PROVIDER`, then reports symbol/ticker availability and provider errors.
-
-## Development Notes
-
-- The codebase is modular and provider-oriented.
-- Bybit and OKX REST providers are implemented first.
-- Gate.io and MEXC are included for altcoin expansion.
-- KuCoin is an optional provider skeleton.
-- No production migration system is included yet; SQLite schema creation is automatic for MVP.
-
-## Roadmap
-
-- Improve OKX/Gate/MEXC WebSocket parsing.
-- Add PostgreSQL migration support.
-- Add Docker deployment.
-- Add signal performance tracking for TP/SL.
-- Add backtesting.
-- Add dashboard.
-
-Auto-trading is intentionally not implemented.
