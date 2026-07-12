@@ -131,6 +131,10 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)) -> d
         if action == "watchlist_refresh":
             from app.watchlist.manager import refresh_all
             await refresh_all(bot)
+        if action == "watchlist_full":
+            from app.watchlist.manager import render_full_watchlist
+            msg = await render_full_watchlist()
+            await bot.send_admin(msg)
         if action == "watchlist_clear":
             from app.watchlist.manager import force_refresh
             await force_refresh(bot)

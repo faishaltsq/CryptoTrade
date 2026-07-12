@@ -187,9 +187,10 @@ def handle_command(db: Session, text: str) -> tuple[str, str | None]:
             return f"<b>Approving signal #{parts[1]}...</b>", result
         return result, None
     if cmd == "/watchlist":
-        from app.watchlist.manager import refresh_all, force_refresh
         if len(parts) > 1 and parts[1] == "clear":
             return "<b>Watchlist cleared</b>", "watchlist_clear"
+        if len(parts) > 1 and parts[1] == "full":
+            return "<b>Watchlist</b> — full list loading...", "watchlist_full"
         return "<b>Watchlist refreshed</b>", "watchlist_refresh"
     if cmd == "/scan_now":
         return "<b>🔎 Manual Scan Started</b>\n\nBot sedang scan market sekarang. Hasil akan dikirim setelah scan selesai.", "scan_now"

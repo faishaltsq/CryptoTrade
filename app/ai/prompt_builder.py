@@ -140,6 +140,7 @@ Rules:
     b. Patrol is BETTER than a bad entry. WAIT is a valid decision. Do not force trades.
     c. Quality over quantity: reject mediocre setups. Only recommend entries with clear evidence.
     d. Your analysis will be compared with previous scans. Track whether conditions improve, stay stable, or deteriorate.
+    e. Keep the reason field CONCISE (max 80 characters): 2-3 short tags like "Bullish HTF • Vol Rising" or "Bearish • Near Resistance". Avoid long paragraphs.
 35. TP2 PROBABILITY ASSESSMENT (REQUIRED for every BUY/SELL signal):
     a. For every BUY or SELL signal, you MUST include tp2_probability (0-100) in the risk object of your JSON output. This is a REQUIRED field.
     b. Estimate the likelihood of TP2 being reached based on: structural target proximity, HTF trend strength, volume support, RSI room, S/R levels between TP1 and TP2.

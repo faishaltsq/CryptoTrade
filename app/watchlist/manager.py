@@ -1,3 +1,4 @@
+import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
 from time import time
@@ -219,10 +220,13 @@ _LAST_REFRESH = 0.0
 _REFRESH_DEBOUNCE = 30
 _CACHED_MSG_ID: int | None = None
 _CACHED_CHAT_ID: str = ""
+_PREV_HASH: str = ""
+_EDIT_COOLDOWN = 60
+_LAST_EDIT = 0.0
 
 
 async def refresh_all(bot) -> None:
-    global _LAST_REFRESH, _CACHED_MSG_ID, _CACHED_CHAT_ID
+    global _LAST_REFRESH, _CACHED_MSG_ID, _CACHED_CHAT_ID, _PREV_HASH, _LAST_EDIT
     now = time()
     if now - _LAST_REFRESH < _REFRESH_DEBOUNCE:
         return
@@ -233,6 +237,7 @@ async def refresh_all(bot) -> None:
     stored_date = _get_stored_date()
     if stored_date and stored_date != today:
         _CACHED_MSG_ID = None
+        _PREV_HASH = ""
     db = SessionLocal()
     try:
         repository.remove_expired_watchlist(db)
@@ -246,17 +251,22 @@ async def refresh_all(bot) -> None:
         watching = [i for i in items if i.state == "WATCHING"]
         weak = [i for i in items if i.state == "WEAK"]
 
-        if ready:
-            ready.sort(key=lambda x: x.opportunity_score, reverse=True)
-        if watching:
-            watching.sort(key=lambda x: x.opportunity_score, reverse=True)
-        if weak:
-            weak.sort(key=lambda x: x.opportunity_score, reverse=True)
+        for lst in (ready, watching, weak):
+            lst.sort(key=lambda x: x.opportunity_score, reverse=True)
 
         msg = _render_message(ready, watching, weak)
+        msg_hash = hashlib.sha256(msg.encode()).hexdigest()
+        if msg_hash == _PREV_HASH:
+            return
+        _PREV_HASH = msg_hash
+
+        if now - _LAST_EDIT < _EDIT_COOLDOWN:
+            return
+        _LAST_EDIT = now
+
         settings = get_settings()
         if not _CACHED_CHAT_ID:
-            _CACHED_CHAT_ID = settings.telegram_channel_chat_id or settings.telegram_admin_chat_id
+            _CACHED_CHAT_ID = settings.telegram_admin_chat_id
 
         if _CACHED_MSG_ID and _CACHED_CHAT_ID:
             edited = await _edit_msg(bot, _CACHED_CHAT_ID, _CACHED_MSG_ID, msg)
@@ -313,43 +323,159 @@ def _get_stored_date() -> str:
 
 
 def _render_message(ready: list, watching: list, weak: list) -> str:
-    now = datetime.now(timezone.utc).strftime("%H:%M UTC")
-    lines = [f"<b>Live Watchlist</b>  —  {now}"]
-    lines.append("━" * 30)
+    now_wib = _now_wib()
+    lines = [f"<b>📊 LIVE WATCHLIST</b> • {now_wib}", ""]
 
-    for label, items in [("READY", ready), ("WATCHING", watching), ("WEAK", weak)]:
+    groups = [
+        ("🟩 BREAKOUT READY", ready),
+        ("🟨 ACCUMULATING", [i for i in watching if i.market_state == "ACCUMULATING"]),
+        ("⬜ CHOPPY", [i for i in watching if i.market_state in ("CHOPPY", "TRENDING", "PULLBACK_READY", "WATCHING")]),
+        ("🟥 WEAK", weak),
+    ]
+
+    for label, items in groups:
         if not items:
             continue
-        emoji = {"READY": "🔥", "WATCHING": "👀", "WEAK": "⚠"}[label]
-        lines.append(f"{emoji} <b>{label}</b>")
-        for i in items:
-            dir_emoji = "🟢" if i.direction == "BUY" else "🔴"
-            delta_str = f" Δ{'+' if i.probability_delta > 0 else ''}{i.probability_delta}% " if i.probability_delta != 0 else ""
-            market_tag = f"[{i.market_state}] " if i.market_state and i.market_state != "WATCHING" else ""
-            prob_str = f"{i.previous_probability}%" if i.previous_probability else f"{i.confidence}%"
-            trigger = f" {i.trigger_distance_pct:.1f}%" if 0 < i.trigger_distance_pct < 100 else " now" if i.trigger_distance_pct == 0 else ""
-            lines.append(f"{dir_emoji} <code>{i.symbol}</code> {market_tag}op{i.opportunity_score} {prob_str}{delta_str}| P{i.priority_score} |{trigger}")
-            if i.prob_change_reason:
-                lines.append(f"  {i.prob_change_reason}")
-            lines.append(f"  {_short_reason(i.reason)}")
+        show = items[:8]
+        lines.append(f"<b>{label}</b> ({len(items)})")
+        lines.append("━" * 20)
+        for i in show:
+            rendered = _render_entry(i)
+            lines.append(rendered)
+        if len(items) > 8:
+            lines.append(f"<i>  ...and {len(items) - 8} more pairs → /watchlist_full</i>")
         lines.append("")
 
-    total = len(ready) + len(watching) + len(weak)
-    lines.append(f"<b>Total:</b> {total}")
+    ready_n = len(ready)
+    acc_n = len([i for i in watching if i.market_state == "ACCUMULATING"])
+    chp_n = len([i for i in watching if i.market_state in ("CHOPPY", "TRENDING", "PULLBACK_READY", "WATCHING")])
+    w_n = len(weak)
+
+    lines.append("━" * 20)
+    lines.append(f"<b>📈 Summary:</b> {ready_n} Ready | {acc_n} Acc | {chp_n} Chp | {w_n} Weak")
+    lines.append(f"<b>📋 Total:</b> {ready_n + acc_n + chp_n + w_n} pairs tracked")
+    lines.append("<i>/watchlist_full</i> for all pairs")
+    lines.append("")
+    lines.append("<i>ℹ️ Conf=Confidence Δ=Change Opp=Opportunity RR=Risk:Reward</i>")
     return "\n".join(lines)
 
 
-def _short_reason(text: str) -> str:
-    return (text or "-")[:80].replace("\n", " ").strip()
+def _render_entry(i) -> str:
+    emoji = "🟢" if i.direction == "BUY" else "🔴"
+    conf = i.confidence or 0
+    opp = i.opportunity_score or 0
+    rr = i.risk_reward or 0
+    dist = i.trigger_distance_pct or 0
+    ms = i.market_state or "WATCHING"
+    delta = i.probability_delta or 0
+    delta_str = f"Δ{'+' if delta > 0 else ''}{delta}" if delta else ""
+    conf_part = f"Conf {conf}%" + (f" ({delta_str})" if delta_str else "")
+    rr_part = f"RR {rr:.1f}" if rr and rr > 0 else "RR —"
+    if conf >= 40:
+        trigger_txt = "NOW" if dist <= 0 else f"{dist:.2f}%" if dist < 999 else "--"
+    else:
+        trigger_txt = "--"
+    tags = _dedup_tags(_tag_from_reason(i.reason), i.direction)
+    lines = [f"{emoji} <b>{i.symbol}</b> <i>[{_status_label(ms)}]</i>"]
+    lines.append(f"   {conf_part} • Opp {opp} • {rr_part}")
+    lines.append(f"   Trigger: {trigger_txt}")
+    if tags:
+        lines.append(f"   {' • '.join(tags)}")
+    return "\n".join(lines)
 
 
-async def _send_msg(bot, chat_id: str, text: str) -> int | None:
+def _status_label(ms: str) -> str:
+    m = {"BREAKOUT_READY": "BRK READY", "BREAKDOWN_READY": "BRK READY", "ACCUMULATING": "ACCUMULATING",
+         "TRENDING": "TRENDING", "PULLBACK_READY": "PULLBACK", "CHOPPY": "CHOPPY",
+         "WEAK": "WEAK", "WATCHING": "WATCHING", "INVALID": "INVALID"}
+    return m.get(ms, ms)
+
+
+def _dedup_tags(tags: list[str], direction: str) -> list[str]:
+    conflicting = [("Bullish HTF", "Bearish HTF"), ("Near Supp", "Near Res"), ("Overbought", "Oversold")]
+    result = list(tags)
+    for a, b in conflicting:
+        if a in result and b in result:
+            if direction == "BUY":
+                result.remove(b)
+            elif direction == "SELL":
+                result.remove(a)
+            else:
+                result[:] = [t for t in result if t not in (a, b)]
+    seen = set()
+    unique = [t for t in result if not (t in seen or seen.add(t))]
+    return unique[:3]
+
+
+def _now_wib() -> str:
+    from zoneinfo import ZoneInfo
+    return datetime.now(ZoneInfo("Asia/Jakarta")).strftime("%H:%M WIB")
+
+
+async def render_full_watchlist() -> str:
+    db = SessionLocal()
     try:
-        ids = await bot.send_message(chat_id, text)
-        return ids[0] if ids else None
-    except Exception as e:  # noqa: BLE001
-        logger.warning("Watchlist send failed: %s", e)
-        return None
+        repository.remove_expired_watchlist(db)
+        items = repository.get_active_watchlist(db)
+        for item in items:
+            item.opportunity_score = compute_opportunity_score(item)
+        db.commit()
+
+        ready = [i for i in items if i.state == "READY"]
+        watching = [i for i in items if i.state == "WATCHING"]
+        weak = [i for i in items if i.state == "WEAK"]
+        for lst in (ready, watching, weak):
+            lst.sort(key=lambda x: x.opportunity_score, reverse=True)
+
+        now_wib = _now_wib()
+        lines = [f"<b>📊 FULL WATCHLIST</b> • {now_wib}", ""]
+        groups = [
+            ("🟩 BREAKOUT READY", ready, None),
+            ("🟨 ACCUMULATING", [i for i in watching if i.market_state == "ACCUMULATING"], None),
+            ("⬜ CHOPPY", [i for i in watching if i.market_state in ("CHOPPY", "TRENDING", "PULLBACK_READY", "WATCHING")], None),
+            ("🟥 WEAK", weak, None),
+        ]
+        for label, items, _ in groups:
+            if not items:
+                continue
+            lines.append(f"<b>{label}</b> ({len(items)})")
+            lines.append("━" * 20)
+            for i in items:
+                lines.append(_render_entry(i))
+            lines.append("")
+        lines.append(f"<b>Total:</b> {len(items)} pairs")
+        return "\n".join(lines)
+    finally:
+        db.close()
+
+
+def _tag_from_reason(reason: str) -> list[str]:
+    if not reason:
+        return ["Monitoring"]
+    r = reason.lower()
+    tags = []
+    checks = [
+        ("Bullish HTF", ["bullish", "higher high", "d1 bullish", "h4 bullish"]),
+        ("Bearish HTF", ["bearish", "lower low", "d1 bearish", "h4 bearish"]),
+        ("Vol Rising", ["volume spike", "volume rising", "volume increasing"]),
+        ("Vol Fading", ["volume fading", "volume falling", "volume declining", "low volume"]),
+        ("Near Supp", ["at_support", "near support", "support holding"]),
+        ("Near Res", ["at_resistance", "near resistance", "resistance holding"]),
+        ("Overbought", ["overbought", "rsi overbought"]),
+        ("Oversold", ["oversold", "rsi oversold"]),
+        ("Trend Strong", ["strong trend", "trend intact"]),
+        ("Trend Weak", ["momentum declining", "momentum weakening"]),
+        ("Ranging", ["ranging", "consolidation", "choppy", "range bound"]),
+        ("Brkout Soon", ["breakout forming", "breakout attempt", "breakout ready"]),
+        ("Accumulating", ["accumulation", "obv rising", "cvd bullish"]),
+        ("Fake Breakout", ["false breakout", "fakeout", "bull trap", "bear trap"]),
+        ("Good RR", ["favorable rr", "risk-reward favorable"]),
+        ("Need Confirm", ["waiting confirmation", "need confirmation", "wait for reaction"]),
+    ]
+    for tag, keywords in checks:
+        if any(k in r for k in keywords):
+            tags.append(tag)
+    return tags[:2] or ["Monitoring"]
 
 
 async def _edit_msg(bot, chat_id: str, msg_id: int, text: str) -> bool:
@@ -359,3 +485,12 @@ async def _edit_msg(bot, chat_id: str, msg_id: int, text: str) -> bool:
     except Exception as e:  # noqa: BLE001
         logger.warning("Watchlist edit failed msg_id=%d: %s", msg_id, e)
         return False
+
+
+async def _send_msg(bot, chat_id: str, text: str) -> int | None:
+    try:
+        ids = await bot.send_message(chat_id, text)
+        return ids[0] if ids else None
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Watchlist send failed: %s", e)
+        return None
